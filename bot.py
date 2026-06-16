@@ -50,9 +50,9 @@ BAD_WORDS = ["porn", "sex", "xxx"]
 def main_menu():
     return ReplyKeyboardMarkup(
         keyboard=[
-            [KeyboardButton(text=":scroll: Whitelist Request")],
-            [KeyboardButton(text=":gem: Server Shop")],
-            [KeyboardButton(text=":sos: Support Ticket")]
+            [KeyboardButton(text="📜 Whitelist Request")],
+            [KeyboardButton(text="💎 Server Shop")],
+            [KeyboardButton(text="🆘 Support Ticket")]
         ],
         resize_keyboard=True
     )
@@ -66,40 +66,35 @@ async def start(message: Message):
     save_users(users)
 
     await message.answer(
-        "<b>:wave: Welcome to TheFellOmen Server</b>\n\n"
-        "Use the menu below to interact with staff.",
+        "<b>👋 Welcome to TheFellOmen Server</b>\n\nUse the menu below to interact with staff.",
         reply_markup=main_menu()
     )
 
 # ---------------- WHITELIST ----------------
 
-@router.message(lambda m: m.text == ":scroll: Whitelist Request")
+@router.message(lambda m: m.text == "📜 Whitelist Request")
 async def whitelist(message: Message):
 
     await message.answer(
-        "<b>:scroll: Whitelist Request</b>\n\n"
-        "Send your Minecraft username and description."
+        "<b>📜 Whitelist Request</b>\n\nSend your Minecraft username and description."
     )
 
 # ---------------- SHOP ----------------
 
-@router.message(lambda m: m.text == ":gem: Server Shop")
+@router.message(lambda m: m.text == "💎 Server Shop")
 async def shop(message: Message):
 
     await message.answer(
-        "<b>:gem: Server Shop</b>\n"
-        "Store link:\n"
-        "https://your-store-link.com"
+        "<b>💎 Server Shop</b>\nStore link:\nhttps://your-store-link.com"
     )
 
 # ---------------- SUPPORT ----------------
 
-@router.message(lambda m: m.text == ":sos: Support Ticket")
+@router.message(lambda m: m.text == "🆘 Support Ticket")
 async def support(message: Message):
 
     await message.answer(
-        "<b>:sos: Support</b>\n"
-        "Send your problem and staff will reply."
+        "<b>🆘 Support</b>\nSend your problem and staff will reply."
     )
 
 # ---------------- TICKET SYSTEM ----------------
@@ -111,7 +106,7 @@ async def ticket_forward(message: Message):
         return
 
     msg = (
-        "<b>:envelope_with_arrow: New Ticket</b>\n\n"
+        "<b>📩 New Ticket</b>\n\n"
         f"<b>User:</b> {message.from_user.full_name}\n"
         f"<b>ID:</b> <code>{message.from_user.id}</code>\n\n"
         f"<b>Message:</b>\n{message.text}"
@@ -119,9 +114,7 @@ async def ticket_forward(message: Message):
 
     await bot.send_message(STAFF_GROUP_ID, msg)
 
-    await message.answer(
-        ":white_check_mark: <b>Your ticket has been sent to staff.</b>"
-    )
+    await message.answer("✅ <b>Your ticket has been sent to staff.</b>")
 
 # ---------------- ANNOUNCEMENT ----------------
 
@@ -143,13 +136,13 @@ async def announce(message: Message):
         try:
             await bot.send_message(
                 user_id,
-                f"<b>:loudspeaker: Server Announcement</b>\n\n{text}"
+                f"<b>📢 Server Announcement</b>\n\n{text}"
             )
             sent += 1
         except:
             pass
 
-    await message.answer(f":white_check_mark: Sent to {sent} users")
+    await message.answer(f"✅ Sent to {sent} users")
 
 # ---------------- GROUP SECURITY ----------------
 
@@ -158,8 +151,6 @@ async def security(message: Message):
 
     user_id = message.from_user.id
     now = datetime.now()
-
-    # ---- spam detection ----
 
     user_messages[user_id] = [
         t for t in user_messages[user_id]
@@ -175,11 +166,8 @@ async def security(message: Message):
         await message.delete()
 
         await message.answer(
-            f":warning:️ <b>{message.from_user.full_name}</b> spam detected\n"
-            f"Warn: {user_warnings[user_id]}"
+            f"⚠️ <b>{message.from_user.full_name}</b> spam detected\nWarn: {user_warnings[user_id]}"
         )
-
-    # ---- media block ----
 
     if message.photo or message.video or message.animation:
 
@@ -188,11 +176,8 @@ async def security(message: Message):
         await message.delete()
 
         await message.answer(
-            f":no_entry_sign: Media not allowed\n"
-            f"Warn: {user_warnings[user_id]}"
+            f"🚫 Media not allowed\nWarn: {user_warnings[user_id]}"
         )
-
-    # ---- bad words ----
 
     if message.text:
 
@@ -205,11 +190,8 @@ async def security(message: Message):
             await message.delete()
 
             await message.answer(
-                f":no_entry_sign: Inappropriate message\n"
-                f"Warn: {user_warnings[user_id]}"
+                f"🚫 Inappropriate message\nWarn: {user_warnings[user_id]}"
             )
-
-    # ---- mute ----
 
     if user_warnings[user_id] == WARN_LIMIT_MUTE:
 
@@ -222,17 +204,15 @@ async def security(message: Message):
         )
 
         await message.answer(
-            f":mute: {message.from_user.full_name} muted 10 minutes"
+            f"🔇 {message.from_user.full_name} muted 10 minutes"
         )
-
-    # ---- ban ----
 
     if user_warnings[user_id] >= WARN_LIMIT_BAN:
 
-        await message.chat.ban(user_id)
+        await bot.ban_chat_member(message.chat.id, user_id)
 
         await message.answer(
-            f":no_entry: {message.from_user.full_name} banned"
+            f"⛔ {message.from_user.full_name} banned"
         )
 
 # ---------------- MAIN ----------------
