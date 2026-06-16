@@ -44,7 +44,7 @@ def main_menu():
 
 @router.message(Command("start"))
 async def cmd_start(message: Message):
-    # کلاً متد answer_photo حذف شد تا ارور قبلی تکرار نشود
+
     await message.answer(
         f"⚔️ **The Fell Omen Server**\n\nسلام {message.from_user.first_name}!\nبرای ارتباط با تیم مدیریت از دکمه‌های زیر استفاده کن:",
         reply_markup=main_menu(),
