@@ -5,15 +5,17 @@ from collections import defaultdict
 
 from aiogram import Bot, Dispatcher, Router
 from aiogram.client.default import DefaultBotProperties
-from aiogram.filters import Command
+from aiogram.filters import CommandStart
 from aiogram.types import Message, KeyboardButton, ReplyKeyboardMarkup, ChatPermissions, InlineKeyboardButton, InlineKeyboardMarkup
 from aiogram.enums import ParseMode
 from aiogram.utils.markdown import hlink, hcode
+from aiogram.types import CallbackQuery # Import CallbackQuery
 
 # --- Configuration ---
-TOKEN = "8975820451:AAEBZjhBGdFNCjnCcvld09oItdJYnkGCsGU"  # **URGENT: Replace with your actual token!**
-STAFF_GROUP_ID = -1004332150226  # Replace with your staff group ID
-ADMINS = [1256603181]  # Replace with your admin user IDs
+# **URGENT: Replace with your actual token and IDs!**
+TOKEN = "8975820451:AAEBZjhBGdFNCjnCcvld09oItdJYnkGCsGU"
+STAFF_GROUP_ID = -1004332150226
+ADMINS = [1256603181]
 
 # --- Bot Initialization ---
 bot = Bot(
@@ -46,12 +48,27 @@ users = load_users()
 # --- Security Settings ---
 WARN_LIMIT_MUTE = 3
 WARN_LIMIT_BAN = 5
-SPAM_LIMIT = 4
+
+# Spam detection settings
+SPAM_DETECTION_THRESHOLD = 4  # Number of messages within SPAM_INTERVAL to trigger spam
 SPAM_INTERVAL = 5  # seconds
-BAD_WORDS = ["porn", "sex", "xxx", "کص", "کون", "جنده"] # Added Persian bad words
+
+# Bad words list - Combined Persian and English offensive terms
+BAD_WORDS = [
+    # Persian offensive terms
+    "کیر", "کص", "کون", "جنده", "حرامزاده", "بی ناموس", "مادرجنده", "خواهر جنده",
+    "کس ننه", "کس ننت", "کس ننش", "کس مادر", "کس خار", "کونی", "تخم", "گاییدن",
+    "سکسی", "پورن", "سکس", "کصکش", "گوه", "لجن",
+    # English offensive terms
+    "fuck", "fucking", "shit", "shitty", "asshole", "motherfucker", "bitch",
+    "cunt", "dick", "pussy", "cock", "bastard", "damn", "hell", "sex", "porn",
+    "nigger", "faggot", "chink", "slut", "whore", "jizz", "cum", "rape",
+    "kill", "murder", "die", "suicide", "terrorist"
+]
+
 
 user_warnings = defaultdict(int)
-user_messages = defaultdict(list) # Stores timestamps of messages from each user
+user_messages = defaultdict(list) # Stores timestamps of recent messages from each user
 
 # --- Ticket System ---
 TICKET_FILE = "tickets.json"
@@ -79,18 +96,23 @@ def save_tickets():
 
 tickets = load_tickets()
 
+# --- Menu Button Texts ---
+BTN_WHITELIST = "📜 Whitelist Request"
+BTN_SHOP = "💎 Server Shop"
+BTN_SUPPORT = "🆘 Support Ticket"
 
-# --- Menu ---
+# --- Main Menu Markup ---
 def get_main_menu():
     return ReplyKeyboardMarkup(
         keyboard=[
-            [KeyboardButton(text="📜 درخواست لیست سفید")],
-            [KeyboardButton(text="💎 فروشگاه سرور")],
-            [KeyboardButton(text="🆘 تیکت پشتیبانی")]
+            [KeyboardButton(text=BTN_WHITELIST)],
+            [KeyboardButton(text=BTN_SHOP)],
+            [KeyboardButton(text=BTN_SUPPORT)]
         ],
         resize_keyboard=True
     )
 
+# --- Staff Reply Markup ---
 def get_staff_reply_markup(ticket_id):
     return InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="پاسخ دادن", callback_data=f"reply_ticket_{ticket_id}")]
@@ -99,20 +121,20 @@ def get_staff_reply_markup(ticket_id):
 # --- Handlers ---
 
 # /start command
-@router.message(Command("start"))
+@router.message(CommandStart())
 async def start(message: Message):
     user_id = message.from_user.id
     if user_id not in users:
         users.add(user_id)
         save_users(users)
         welcome_message = (
-            f"<b>👋 به سرور TheFellOmen خوش آمدید!</b>\n\n"
-            "با استفاده از منوی زیر می‌توانید با ادمین‌ها در ارتباط باشید."
+            f"<b>👋 Welcome to TheFellOmen Server!</b>\n\n"
+            "Use the menu below to interact with staff."
         )
     else:
         welcome_message = (
-            f"<b>👋 خوش برگشتی به سرور TheFellOmen!</b>\n\n"
-            "هنوز سوالی داری؟ از منوی زیر استفاده کن."
+            f"<b>👋 Welcome back to TheFellOmen Server!</b>\n\n"
+            "Need something? Use the menu below."
         )
 
     await message.answer(
@@ -120,28 +142,29 @@ async def start(message: Message):
         reply_markup=get_main_menu()
     )
 
-# Whitelist Request button
-@router.message(lambda m: m.text == "📜 درخواست لیست سفید")
+# Whitelist Request button handler
+@router.message(lambda m: m.text == BTN_WHITELIST)
 async def whitelist_request(message: Message):
     await message.answer(
-        "<b>📜 درخواست لیست سفید</b>\n\n"
-        "لطفاً نام کاربری Minecraft و توضیحات خود را ارسال کنید."
+        "<b>📜 Whitelist Request</b>\n\n"
+        "Please send your Minecraft username and a brief description."
     )
 
-# Server Shop button
-@router.message(lambda m: m.text == "💎 فروشگاه سرور")
+# Server Shop button handler
+@router.message(lambda m: m.text == BTN_SHOP)
 async def server_shop(message: Message):
     await message.answer(
-        "<b>💎 فروشگاه سرور</b>\n"
-        "لینک فروشگاه: https://your-store-link.com" # Replace with your actual store link
+        "<b>💎 Server Shop</b>\n"
+        "Visit our store for amazing deals:\n"
+        "https://your-store-link.com" # Replace with your actual store link
     )
 
-# Support Ticket button
-@router.message(lambda m: m.text == "🆘 تیکت پشتیبانی")
+# Support Ticket button handler
+@router.message(lambda m: m.text == BTN_SUPPORT)
 async def support_ticket(message: Message):
     await message.answer(
-        "<b>🆘 پشتیبانی</b>\n"
-        "مشکل خود را شرح دهید تا ادمین‌ها شما را راهنمایی کنند."
+        "<b>🆘 Support</b>\n"
+        "Please describe your issue, and our staff will assist you shortly."
     )
 
 # Forwarding private messages to staff group (Ticket System)
@@ -154,9 +177,9 @@ async def handle_private_message(message: Message):
     if message.text and message.text.startswith("/"):
         return
 
-    # Ignore media messages for ticket content, ask user to send text
+    # Ignore media, ask user to send text
     if message.photo or message.video or message.animation or message.document or message.sticker:
-        await message.answer("لطفاً مشکل خود را به صورت متنی ارسال کنید.")
+        await message.answer("Please send your issue as a text message.")
         return
 
     if not message.text: # Ignore empty messages
@@ -177,82 +200,72 @@ async def handle_private_message(message: Message):
     }
     save_tickets()
 
-    # Prepare message for staff group (using invisible markdown for message content)
+    # Prepare message for staff group
     ticket_message_to_staff = (
-        f"<b>📩 تیکت جدید #{current_ticket_id}</b>\n\n"
-        f"<b>کاربر:</b> {hlink(username, f'tg://user?id={user_id}')}\n"
-        f"<b>آی‌دی کاربر:</b> {hcode(str(user_id))}\n"
-        f"<b>زمان:</b> {timestamp}\n\n"
-        f"<b>پیام:</b>\n{message.text}" # User's message is directly visible here
+        f"<b>📩 New Ticket #{current_ticket_id}</b>\n\n"
+        f"<b>User:</b> {hlink(username, f'tg://user?id={user_id}')}\n"
+        f"<b>User ID:</b> {hcode(str(user_id))}\n"
+        f"<b>Time:</b> {timestamp}\n\n"
+        f"<b>Message:</b>\n{message.text}"
     )
 
-    # Send to staff group with an inline button to reply
     try:
         await bot.send_message(
             STAFF_GROUP_ID,
             ticket_message_to_staff,
             reply_markup=get_staff_reply_markup(current_ticket_id)
         )
-        await message.answer("✅ <b>تیکت شما با موفقیت ارسال شد.</b> ادمین‌ها به زودی پاسخ خواهند داد.")
+        await message.answer("✅ <b>Your ticket has been sent to staff.</b> They will reply soon.")
     except Exception as e:
         print(f"Error sending ticket to staff group: {e}")
-        await message.answer("خطایی در ارسال تیکت رخ داد. لطفاً دوباره تلاش کنید.")
+        await message.answer("An error occurred while sending your ticket. Please try again.")
 
 
 # Callback query handler for staff replies
 @router.callback_query(lambda c: c.data and c.data.startswith("reply_ticket_"))
 async def handle_reply_ticket_callback(callback_query: CallbackQuery):
-    ticket_id_str = callback_query.data.split("_")[2]
-    try:
-        ticket_id = int(ticket_id_str)
-    except ValueError:
-        await callback_query.answer("شناسه تیکت نامعتبر است.", show_alert=True)
+    parts = callback_query.data.split("_")
+    if len(parts) != 3:
+        await callback_query.answer("Invalid callback data.", show_alert=True)
         return
 
-    # Ask staff for the reply message
+    try:
+        ticket_id = int(parts[2])
+    except ValueError:
+        await callback_query.answer("Invalid ticket ID.", show_alert=True)
+        return
+
+    # Store ticket_id in callback state for the next message handler
     await callback_query.message.answer(
-        f"<b>پاسخ خود را برای تیکت #{ticket_id} ارسال کنید:</b>\n"
-        "(این پیام به کاربر ارسال خواهد شد)",
+        f"<b>Please type your reply for Ticket #{ticket_id}:</b>\n"
+        "(This message will be sent to the user)",
         reply_markup=InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton(text="لغو", callback_data=f"cancel_reply_{ticket_id}")]
+            [InlineKeyboardButton(text="Cancel", callback_data=f"cancel_reply_{ticket_id}")]
         ])
     )
-    # Store the ticket ID in the callback data state for the next message
-    callback_query.data += f"_{ticket_id}" # Append ticket_id for the next handler
+    # Set state to expect a reply for this ticket
+    dp.current_state = callback_query.from_user.id # This is a simplified way, use FSM for better state management
+    dp.state_data = {"replying_to_ticket": ticket_id}
+    await callback_query.answer() # Acknowledge the callback
 
 
-# Handler for staff reply messages
-@router.message(lambda m: m.chat.id == STAFF_GROUP_ID and m.reply_to_message)
+# Handler for staff reply messages (now using state)
+@router.message(lambda m: m.chat.id == STAFF_GROUP_ID)
 async def handle_staff_reply(message: Message):
-    replied_message = message.reply_to_message
-    if not replied_message.reply_markup or not replied_message.reply_markup.inline_keyboard:
-        return # Not a ticket message
+    # Check if the user is in a state where they are replying to a ticket
+    if hasattr(dp, 'current_state') and dp.current_state == message.from_user.id and \
+       hasattr(dp, 'state_data') and "replying_to_ticket" in dp.state_data:
 
-    # Extract ticket ID from the original ticket message
-    ticket_id_str = None
-    if replied_message.text and "<b>ای‌دی کاربر:</b>" in replied_message.text:
-         for line in replied_message.text.split('\n'):
-            if "<b>ای‌دی کاربر:</b>" in line:
-                 # Extract user ID from the reply_to_message's text
-                 parts = line.split("<code>")
-                 if len(parts) > 1:
-                    user_id_str = parts[1].split("</code>")[0]
-                    try:
-                        user_id = int(user_id_str)
-                    except ValueError:
-                        await message.answer("خطا در استخراج آی‌دی کاربر.")
-                        return
-                    break
-    else:
-        # Fallback if the structure is different, try to parse from callback data if available
-        # This part might need adjustment based on how you store ticket IDs in the DB
-        # For now, we assume direct text parsing is primary
-        await message.answer("لطفاً به پیام تیکت اصلی ریپلای کنید.")
-        return
+        ticket_id = dp.state_data.get("replying_to_ticket")
+        if ticket_id is None:
+            # If no ticket ID is associated, ignore or handle as a normal message
+            return
 
-
-    if user_id and message.text:
         reply_text = message.text
+        if not reply_text:
+            await message.answer("Please send a text reply.")
+            return
+
         timestamp = datetime.now().isoformat()
 
         # Add reply to the ticket data
@@ -264,39 +277,93 @@ async def handle_staff_reply(message: Message):
             })
             save_tickets()
 
-        # Forward the reply to the user
+            # Forward the reply to the user
+            original_ticket_info = tickets[ticket_id]
+            user_id_to_reply = original_ticket_info["user_id"]
+            username = original_ticket_info["username"]
+
+            try:
+                await bot.send_message(
+                    user_id_to_reply,
+                    f"<b>💬 Staff Reply (Ticket #{ticket_id}):</b>\n\n{reply_text}"
+                )
+                await message.answer(f"✅ Reply sent to user {username} (ID: {user_id_to_reply}).")
+            except Exception as e:
+                print(f"Error sending reply to user {user_id_to_reply}: {e}")
+                await message.answer(f"Error sending reply to user {username}. They might have blocked the bot.")
+        else:
+            await message.answer(f"Ticket #{ticket_id} not found.")
+
+        # Clear state after sending reply
+        del dp.current_state
+        del dp.state_data
+
+    # Handle messages that are direct replies to the bot's ticket message in staff chat
+    elif message.reply_to_message and message.reply_to_message.text and "📩 New Ticket #" in message.reply_to_message.text:
+        # Extract ticket ID from the replied message text
         try:
-            await bot.send_message(
-                user_id,
-                f"<b>💬 پاسخ از پشتیبانی (تیکت #{ticket_id}):</b>\n\n{reply_text}"
-            )
-            await message.answer(f"✅ پاسخ به کاربر (ID: {user_id}) ارسال شد.")
-        except Exception as e:
-            print(f"Error sending reply to user {user_id}: {e}")
-            await message.answer(f"خطا در ارسال پاسخ به کاربر (ID: {user_id}).")
-    else:
-        await message.answer("لطفاً متن پاسخی را ارسال کنید.")
+            ticket_id_str = message.reply_to_message.text.split("New Ticket #")[1].split("\n")[0]
+            ticket_id = int(ticket_id_str)
+        except (IndexError, ValueError):
+            await message.answer("Could not determine ticket ID from the replied message.")
+            return
+
+        reply_text = message.text
+        if not reply_text:
+            await message.answer("Please send a text reply.")
+            return
+
+        timestamp = datetime.now().isoformat()
+
+        # Add reply to the ticket data
+        if ticket_id in tickets:
+            tickets[ticket_id]["replies"].append({
+                "sender": "staff",
+                "message": reply_text,
+                "timestamp": timestamp
+            })
+            save_tickets()
+
+            # Forward the reply to the user
+            original_ticket_info = tickets[ticket_id]
+            user_id_to_reply = original_ticket_info["user_id"]
+            username = original_ticket_info["username"]
+
+            try:
+                await bot.send_message(
+                    user_id_to_reply,
+                    f"<b>💬 Staff Reply (Ticket #{ticket_id}):</b>\n\n{reply_text}"
+                )
+                await message.answer(f"✅ Reply sent to user {username} (ID: {user_id_to_reply}).")
+            except Exception as e:
+                print(f"Error sending reply to user {user_id_to_reply}: {e}")
+                await message.answer(f"Error sending reply to user {username}. They might have blocked the bot.")
+        else:
+            await message.answer(f"Ticket #{ticket_id} not found.")
 
 
 # Handler for cancelling a reply action
 @router.callback_query(lambda c: c.data and c.data.startswith("cancel_reply_"))
 async def handle_cancel_reply_callback(callback_query: CallbackQuery):
+    if hasattr(dp, 'current_state') and dp.current_state == callback_query.from_user.id:
+        del dp.current_state
+        del dp.state_data
     await callback_query.message.delete_reply_markup()
-    await callback_query.answer("عملیات لغو شد.")
+    await callback_query.answer("Reply cancelled.")
 
 
 # Announcement command (for admins)
-@router.message(Command("announce"))
+@router.message(CommandStart("announce")) # Using CommandStart for a simple command handler
 async def announce_command(message: Message):
     user_id = message.from_user.id
     if user_id not in ADMINS:
-        await message.answer("شما ادمین نیستید و اجازه ارسال پیام عمومی ندارید.")
+        await message.answer("You are not an administrator and do not have permission to send broadcast messages.")
         return
 
     text_to_announce = message.text.replace("/announce", "").strip()
 
     if not text_to_announce:
-        await message.answer("لطفاً بعد از دستور /announce، متن پیام خود را بنویسید.\nمثال: `/announce به زودی سرور آپدیت می‌شود.`")
+        await message.answer("Please provide a message after the /announce command.\nExample: `/announce Server maintenance starting soon.`")
         return
 
     sent_count = 0
@@ -305,7 +372,7 @@ async def announce_command(message: Message):
         try:
             await bot.send_message(
                 uid,
-                f"<b>📢 اطلاعیه سرور</b>\n\n{text_to_announce}"
+                f"<b>📢 Server Announcement</b>\n\n{text_to_announce}"
             )
             sent_count += 1
         except Exception as e:
@@ -316,9 +383,9 @@ async def announce_command(message: Message):
             #     users.remove(uid)
 
     # save_users(users) # Save if users were removed
-    await message.answer(f"✅ پیام به {sent_count} کاربر ارسال شد.")
+    await message.answer(f"✅ Message sent to {sent_count} users.")
     if failed_users:
-        await message.answer(f"⚠️ ارسال به {len(failed_users)} کاربر ناموفق بود.")
+        await message.answer(f"⚠️ Failed to send to {len(failed_users)} users.")
 
 # Group Security Handler
 @router.message(lambda m: m.chat.type in ["group", "supergroup"])
@@ -328,32 +395,44 @@ async def group_security_check(message: Message):
     now = datetime.now()
 
     # --- Spam Detection ---
+    # Filter out old messages outside the interval
     user_messages[user_id] = [
         t for t in user_messages[user_id]
         if (now - t) < timedelta(seconds=SPAM_INTERVAL)
     ]
     user_messages[user_id].append(now)
 
-    if len(user_messages[user_id]) > SPAM_LIMIT:
+    if len(user_messages[user_id]) > SPAM_DETECTION_THRESHOLD:
         user_warnings[user_id] += 1
-        await message.delete()
-        warning_msg = await message.answer(
-            f"⚠️ کاربر {hlink(message.from_user.full_name, f'tg://user?id={user_id}')} "
-            f"به دلیل اسپم شناسایی شد.\n"
-            f"<b>امتیاز هشدار:</b> {user_warnings[user_id]}/{WARN_LIMIT_BAN}"
+        try:
+            await message.delete()
+        except Exception as e:
+            print(f"Could not delete spam message from user {user_id} in chat {chat_id}: {e}")
+
+        warning_text = (
+            f"⚠️ User {hlink(message.from_user.full_name, f'tg://user?id={user_id}')} "
+            f"detected for spamming.\n"
+            f"<b>Warning Score:</b> {user_warnings[user_id]}/{WARN_LIMIT_BAN}"
         )
+        await message.answer(warning_text)
         # Optionally delete warning message after some time
         # await asyncio.sleep(5)
         # await warning_msg.delete()
 
     # --- Media Blocking ---
+    # Check if message contains media (photo, video, animation, sticker)
     if message.photo or message.video or message.animation or message.sticker:
         user_warnings[user_id] += 1
-        await message.delete()
-        warning_msg = await message.answer(
-            f"🚫 ارسال مدیا (عکس، ویدیو، گیف، استیکر) در این گروه ممنوع است.\n"
-            f"<b>امتیاز هشدار:</b> {user_warnings[user_id]}/{WARN_LIMIT_BAN}"
+        try:
+            await message.delete()
+        except Exception as e:
+            print(f"Could not delete media message from user {user_id} in chat {chat_id}: {e}")
+
+        warning_text = (
+            f"🚫 Sending media (photos, videos, GIFs, stickers) is not allowed in this group.\n"
+            f"<b>Warning Score:</b> {user_warnings[user_id]}/{WARN_LIMIT_BAN}"
         )
+        await message.answer(warning_text)
 
     # --- Bad Words Filter ---
     if message.text:
@@ -361,11 +440,16 @@ async def group_security_check(message: Message):
         detected_words = [word for word in BAD_WORDS if word in txt_lower]
         if detected_words:
             user_warnings[user_id] += 1
-            await message.delete()
-            warning_msg = await message.answer(
-                f"🚫 پیام حاوی کلمات نامناسب ({', '.join(detected_words)}) است.\n"
-                f"<b>امتیاز هشدار:</b> {user_warnings[user_id]}/{WARN_LIMIT_BAN}"
+            try:
+                await message.delete()
+            except Exception as e:
+                print(f"Could not delete bad word message from user {user_id} in chat {chat_id}: {e}")
+
+            warning_text = (
+                f"🚫 Message contains inappropriate words ({', '.join(detected_words)}).\n"
+                f"<b>Warning Score:</b> {user_warnings[user_id]}/{WARN_LIMIT_BAN}"
             )
+            await message.answer(warning_text)
 
     # --- Mute Logic ---
     if user_warnings[user_id] == WARN_LIMIT_MUTE:
@@ -378,37 +462,37 @@ async def group_security_check(message: Message):
                 until_date=mute_until
             )
             await message.answer(
-                f"🔇 کاربر {hlink(message.from_user.full_name, f'tg://user?id={user_id}')} "
-                f"به مدت ۱۰ دقیقه میوت شد."
+                f"🔇 User {hlink(message.from_user.full_name, f'tg://user?id={user_id}')} "
+                f"has been muted for 10 minutes."
             )
         except Exception as e:
             print(f"Error muting user {user_id} in chat {chat_id}: {e}")
-            await message.answer("خطا در میوت کردن کاربر.")
+            await message.answer("Error muting user.")
 
     # --- Ban Logic ---
     if user_warnings[user_id] >= WARN_LIMIT_BAN:
         try:
             await bot.ban_chat_member(chat_id=chat_id, user_id=user_id)
             await message.answer(
-                f"⛔ کاربر {hlink(message.from_user.full_name, f'tg://user?id={user_id}')} "
-                f"به دلیل نقض مکرر قوانین بن شد."
+                f"⛔ User {hlink(message.from_user.full_name, f'tg://user?id={user_id}')} "
+                f"has been banned for repeated violations."
             )
-            # Remove warnings after ban to prevent re-warning if unbanned later
+            # Clean up warnings after ban
             del user_warnings[user_id]
         except Exception as e:
             print(f"Error banning user {user_id} in chat {chat_id}: {e}")
-            await message.answer("خطا در بن کردن کاربر.")
+            await message.answer("Error banning user.")
 
 
 # --- Main Execution ---
 async def main():
-    # It's recommended to delete webhook if using polling, especially on Render
+    # Delete webhook to ensure polling works correctly
     await bot.delete_webhook(drop_pending_updates=True)
 
     dp.include_router(router)
 
-    # Start polling
-    await dp.start_polling(bot, skip_updates=True) # skip_updates=True is good for production
+    # Start polling for updates
+    await dp.start_polling(bot, skip_updates=True)
 
 if __name__ == "__main__":
     # Load tickets on startup
