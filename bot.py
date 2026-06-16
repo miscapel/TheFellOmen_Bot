@@ -1,163 +1,245 @@
-import os
-import json
 import asyncio
-from threading import Thread
-from flask import Flask
-from aiogram import Bot, Dispatcher, Router, F
+import json
+from datetime import datetime, timedelta
+from collections import defaultdict
+
+from aiogram import Bot, Dispatcher, Router
 from aiogram.filters import Command
-from aiogram.types import Message, ReplyKeyboardMarkup, KeyboardButton, InlineKeyboardMarkup, InlineKeyboardButton
+from aiogram.types import Message, KeyboardButton, ReplyKeyboardMarkup, ChatPermissions
+from aiogram.enums import ParseMode
 
-TOKEN = "8975820451:AAEBZjhBGdFNCjnCcvld09oItdJYnkGCsGU"
+TOKEN = "YOUR_BOT_TOKEN"
+
 STAFF_GROUP_ID = -1004332150226
-ADMINS = [1256603181]  # فقط ادمین‌هایی که می‌تونن اعلان عمومی بزنن
+ADMINS = [1256603181]
 
-USERS_FILE = "users.json"
-
-def load_users():
-    if not os.path.exists(USERS_FILE):
-        return []
-    return json.load(open(USERS_FILE, "r"))
-
-def save_user(uid):
-    users = load_users()
-    if uid not in users:
-        users.append(uid)
-        json.dump(users, open(USERS_FILE, "w"))
-
-# -----------------------------------------------------
-
-bot = Bot(token=TOKEN)
+bot = Bot(token=TOKEN, parse_mode=ParseMode.HTML)
 dp = Dispatcher()
 router = Router()
 
-# ------------------- KEEP ALIVE -------------------
-app = Flask('')
+# ---------------- USERS DATABASE ----------------
 
-@app.route('/')
-def home():
-    return "TheFellOmen Bot Running!"
+def load_users():
+    try:
+        with open("users.json", "r") as f:
+            return set(json.load(f))
+    except:
+        return set()
 
-def run():
-    app.run(host='0.0.0.0', port=int(os.environ.get("PORT", 10000)))
+def save_users(users):
+    with open("users.json", "w") as f:
+        json.dump(list(users), f)
 
-def keep_alive():
-    Thread(target=run).start()
+users = load_users()
 
-# ------------------- KEYBOARDS -------------------
+# ---------------- SECURITY SETTINGS ----------------
+
+WARN_LIMIT_MUTE = 3
+WARN_LIMIT_BAN = 5
+
+SPAM_LIMIT = 4
+SPAM_INTERVAL = 5
+
+user_warnings = defaultdict(int)
+user_messages = defaultdict(list)
+
+BAD_WORDS = ["porn", "sex", "xxx"]
+
+# ---------------- MENU ----------------
+
 def main_menu():
     return ReplyKeyboardMarkup(
         keyboard=[
-            [KeyboardButton("📜 Whitelist Request")],
-            [KeyboardButton("💎 Server Shop")],
-            [KeyboardButton("🆘 Support Ticket")]
+            [KeyboardButton(text="📜 Whitelist Request")],
+            [KeyboardButton(text="💎 Server Shop")],
+            [KeyboardButton(text="🆘 Support Ticket")]
         ],
         resize_keyboard=True
     )
 
-def shop_link():
-    return InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="🛒 Visit WebShop", url="https://your-shop-link.com")]
-    ])
+# ---------------- START ----------------
 
-# ------------------- START -------------------
 @router.message(Command("start"))
-async def start_cmd(message: Message):
-    save_user(message.from_user.id)
+async def start(message: Message):
+
+    users.add(message.from_user.id)
+    save_users(users)
+
     await message.answer(
-        f"👋 خوش آمدی {message.from_user.full_name}!\n\n"
-        "از منوی زیر یکی از گزینه‌ها را انتخاب کن:",
+        "<b>👋 Welcome to TheFellOmen Server</b>\n\n"
+        "Use the menu below to interact with staff.",
         reply_markup=main_menu()
     )
 
-# ------------------- WHITELIST -------------------
-@router.message(F.text == "📜 Whitelist Request")
-@router.message(Command("whitelist"))
+# ---------------- WHITELIST ----------------
+
+@router.message(lambda m: m.text == "📜 Whitelist Request")
 async def whitelist(message: Message):
+
     await message.answer(
-        "📝 درخواست وایت‌لیست:\n\n"
-        "لطفاً **نام ماینکرفت** و دلیل عضویت خود را ارسال کنید.\n"
-        "درخواست تو به تیم مدیریت ارسال خواهد شد."
+        "<b>📜 Whitelist Request</b>\n\n"
+        "Send your Minecraft username and description."
     )
 
-# ------------------- SHOP -------------------
-@router.message(F.text == "💎 Server Shop")
-@router.message(Command("shop"))
+# ---------------- SHOP ----------------
+
+@router.message(lambda m: m.text == "💎 Server Shop")
 async def shop(message: Message):
+
     await message.answer(
-        "💎 فروشگاه رسمی سرور:\n\nبا خرید از فروشگاه از ما حمایت کن!",
-        reply_markup=shop_link()
+        "<b>💎 Server Shop</b>\n"
+        "Store link:\n"
+        "https://your-store-link.com"
     )
 
-# ------------------- SUPPORT -------------------
-@router.message(F.text == "🆘 Support Ticket")
-@router.message(Command("support"))
+# ---------------- SUPPORT ----------------
+
+@router.message(lambda m: m.text == "🆘 Support Ticket")
 async def support(message: Message):
+
     await message.answer(
-        "🆘 تیکت پشتیبانی:\n\n"
-        "پیامت را ارسال کن. تیم مدیریت بررسی می‌کند."
+        "<b>🆘 Support</b>\n"
+        "Send your problem and staff will reply."
     )
 
-# ------------------- SEND MESSAGE TO STAFF -------------------
-@router.message(lambda m: m.chat.type == "private" and not m.text.startswith("/"))
-async def forward_to_staff(message: Message):
-    save_user(message.from_user.id)
+# ---------------- TICKET SYSTEM ----------------
+
+@router.message(lambda m: m.chat.type == "private")
+async def ticket_forward(message: Message):
+
+    if message.text.startswith("/"):
+        return
 
     msg = (
-        "📩 **پیام جدید از کاربر**\n"
-        f"👤 نام: {message.from_user.full_name}\n"
-        f"🆔 آی‌دی: `{message.from_user.id}`\n"
-        f"🔗 یوزرنیم: @{message.from_user.username or 'None'}\n"
-        "--------------------------\n"
-        f"💬 پیام:\n{message.text}"
+        "<b>📩 New Ticket</b>\n\n"
+        f"<b>User:</b> {message.from_user.full_name}\n"
+        f"<b>ID:</b> <code>{message.from_user.id}</code>\n\n"
+        f"<b>Message:</b>\n{message.text}"
     )
 
-    await bot.send_message(STAFF_GROUP_ID, msg, parse_mode="Markdown")
-    await message.answer("✅ پیام تو با موفقیت برای **تیم مدیریت** ارسال شد.")
+    await bot.send_message(STAFF_GROUP_ID, msg)
 
-# ------------------- STAFF REPLY -------------------
-@router.message(lambda m: m.chat.id == STAFF_GROUP_ID and m.reply_to_message)
-async def staff_reply(message: Message):
-    try:
-        original = message.reply_to_message.text
-        user_id = int(original.split("🆔 آی‌دی: `")[1].split("`")[0])
+    await message.answer(
+        "✅ <b>Your ticket has been sent to staff.</b>"
+    )
 
-        await bot.send_message(
-            user_id,
-            f"🛡 **پاسخ مدیریت:**\n\n{message.text}",
-            parse_mode="Markdown"
-        )
-        await message.reply("✅ پیام برای کاربر ارسال شد.")
+# ---------------- ANNOUNCEMENT ----------------
 
-    except Exception as e:
-        await message.reply("❌ خطا در ارسال پیام.")
-
-# ------------------- ANNOUNCEMENT -------------------
 @router.message(Command("announce"))
 async def announce(message: Message):
+
     if message.from_user.id not in ADMINS:
-        return await message.answer("❌ تو اجازه این فرمان را نداری.")
+        return
 
     text = message.text.replace("/announce", "").strip()
-    if not text:
-        return await message.answer("لطفاً متن اعلان را بعد از دستور بنویس:\n/announce متن اعلان")
 
-    users = load_users()
+    if not text:
+        await message.answer("Send message after command.")
+        return
+
     sent = 0
 
-    for uid in users:
+    for user_id in users:
         try:
-            await bot.send_message(uid, f"📢 **اعلان جدید:**\n\n{text}", parse_mode="Markdown")
+            await bot.send_message(
+                user_id,
+                f"<b>📢 Server Announcement</b>\n\n{text}"
+            )
             sent += 1
         except:
             pass
 
-    await message.answer(f"📣 اعلان با موفقیت برای {sent} کاربر ارسال شد.")
+    await message.answer(f"✅ Sent to {sent} users")
 
-# ------------------- RUN BOT -------------------
+# ---------------- GROUP SECURITY ----------------
+
+@router.message(lambda m: m.chat.type in ["group", "supergroup"])
+async def security(message: Message):
+
+    user_id = message.from_user.id
+    now = datetime.now()
+
+    # ---- spam detection ----
+
+    user_messages[user_id] = [
+        t for t in user_messages[user_id]
+        if (now - t).seconds < SPAM_INTERVAL
+    ]
+
+    user_messages[user_id].append(now)
+
+    if len(user_messages[user_id]) > SPAM_LIMIT:
+        user_warnings[user_id] += 1
+
+        await message.delete()
+
+        await message.answer(
+            f"⚠️ <b>{message.from_user.full_name}</b> spam detected\n"
+            f"Warn: {user_warnings[user_id]}"
+        )
+
+    # ---- media block ----
+
+    if message.photo or message.video or message.animation:
+        user_warnings[user_id] += 1
+
+        await message.delete()
+
+        await message.answer(
+            f"🚫 Media not allowed\n"
+            f"Warn: {user_warnings[user_id]}"
+        )
+
+    # ---- bad words ----
+
+    if message.text:
+        txt = message.text.lower()
+
+        if any(word in txt for word in BAD_WORDS):
+
+            user_warnings[user_id] += 1
+
+            await message.delete()
+
+            await message.answer(
+                f"🚫 Inappropriate message\n"
+                f"Warn: {user_warnings[user_id]}"
+            )
+
+    # ---- mute ----
+
+    if user_warnings[user_id] == WARN_LIMIT_MUTE:
+
+        until = datetime.now() + timedelta(minutes=10)
+
+        await message.chat.restrict(
+            user_id,
+            permissions=ChatPermissions(can_send_messages=False),
+            until_date=until
+        )
+
+        await message.answer(
+            f"🔇 {message.from_user.full_name} muted 10 minutes"
+        )
+
+    # ---- ban ----
+
+    if user_warnings[user_id] >= WARN_LIMIT_BAN:
+
+        await message.chat.ban(user_id)
+
+        await message.answer(
+            f"⛔ {message.from_user.full_name} banned"
+        )
+
+# ---------------- MAIN ----------------
+
 async def main():
-    dp.include_router(router)
-    keep_alive()
+
     await bot.delete_webhook(drop_pending_updates=True)
+
+    dp.include_router(router)
+
     await dp.start_polling(bot)
 
 if __name__ == "__main__":
