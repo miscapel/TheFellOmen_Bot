@@ -5,7 +5,7 @@ import asyncio
 from typing import Literal
 
 # --- کتابخانه‌های مورد نیاز ---
-from aiogram import Bot, Dispatcher, types, F
+from aiogram import Bot, Dispatcher, types, F # F برای فیلتر کردن حذف شده است
 from aiogram.filters.command import Command
 from aiogram.filters.callback_data import CallbackData
 from aiogram.fsm.storage.memory import MemoryStorage
@@ -233,7 +233,8 @@ async def start_whitelist_process(message: types.Message, state: FSMContext):
     await message.reply("لطفاً یکی از دلایل زیر را برای Whitelist انتخاب کنید:", reply_markup=builder.as_markup())
 
 # --- پردازش کلیک روی دکمه انتخاب دلیل Whitelist ---
-@dp.callback_query(WhitelistCallback.filter(F=lambda F, callback_data: callback_data.action == "select_reason"))
+# اصلاح شده: حذف F= و استفاده مستقیم از action
+@dp.callback_query(WhitelistCallback.filter(action="select_reason"))
 async def process_reason_selection(callback_query: types.CallbackQuery, callback_data: WhitelistCallback, state: FSMContext):
     """
     پردازش انتخاب دلیل توسط کاربر و رفتن به مرحله تایید.
@@ -278,7 +279,8 @@ async def process_reason_selection(callback_query: types.CallbackQuery, callback
     await callback_query.answer("دلیل انتخاب شد.") # بستن نشانگر "Loading" روی دکمه
 
 # --- پردازش تایید نهایی خرید Whitelist ---
-@dp.callback_query(WhitelistCallback.filter(F=lambda F, callback_data: callback_data.action == "confirm_reason"))
+# اصلاح شده: حذف F= و استفاده مستقیم از action
+@dp.callback_query(WhitelistCallback.filter(action="confirm_reason"))
 async def confirm_reason_purchase(callback_query: types.CallbackQuery, callback_data: WhitelistCallback, state: FSMContext):
     """
     تایید نهایی خرید Whitelist و شبیه‌سازی انتقال به درگاه پرداخت.
@@ -321,7 +323,8 @@ async def confirm_reason_purchase(callback_query: types.CallbackQuery, callback_
     await state.clear() # پاک کردن وضعیت کاربر پس از اتمام فرآیند
 
 # --- پردازش دکمه لغو Whitelist ---
-@dp.callback_query(WhitelistCallback.filter(F=lambda F, callback_data: callback_data.action == "cancel_reason"))
+# اصلاح شده: حذف F= و استفاده مستقیم از action
+@dp.callback_query(WhitelistCallback.filter(action="cancel_reason"))
 async def cancel_reason_purchase(callback_query: types.CallbackQuery, state: FSMContext):
     """
     لغو فرآیند Whitelist توسط کاربر.
@@ -360,7 +363,8 @@ async def open_main_shop(message: types.Message, state: FSMContext):
     await message.reply("به فروشگاه خوش آمدید! کدام بخش را می‌خواهید مشاهده کنید؟", reply_markup=builder.as_markup())
 
 # --- نمایش فروشگاه رنک ---
-@dp.callback_query(ShopCallback.filter(F=lambda F, callback_data: callback_data.action == "open_rank_shop"))
+# اصلاح شده: حذف F= و استفاده مستقیم از action
+@dp.callback_query(ShopCallback.filter(action="open_rank_shop"))
 async def show_rank_shop(callback_query: types.CallbackQuery, state: FSMContext):
     """
     نمایش آیتم‌های فروشگاه رنک.
@@ -399,7 +403,8 @@ async def show_rank_shop(callback_query: types.CallbackQuery, state: FSMContext)
     await callback_query.answer("فروشگاه رنک")
 
 # --- نمایش فروشگاه کوین ---
-@dp.callback_query(ShopCallback.filter(F=lambda F, callback_data: callback_data.action == "open_coin_shop"))
+# اصلاح شده: حذف F= و استفاده مستقیم از action
+@dp.callback_query(ShopCallback.filter(action="open_coin_shop"))
 async def show_coin_shop(callback_query: types.CallbackQuery, state: FSMContext):
     """
     نمایش آیتم‌های فروشگاه کوین.
@@ -443,7 +448,8 @@ async def show_coin_shop(callback_query: types.CallbackQuery, state: FSMContext)
     await callback_query.answer("فروشگاه کوین")
 
 # --- پردازش خرید رنک از فروشگاه ---
-@dp.callback_query(ShopCallback.filter(F=lambda F, callback_data: callback_data.action == "buy_rank"))
+# اصلاح شده: حذف F= و استفاده مستقیم از action
+@dp.callback_query(ShopCallback.filter(action="buy_rank"))
 async def process_rank_purchase_callback(callback_query: types.CallbackQuery, callback_data: ShopCallback, state: FSMContext):
     """
     پردازش انتخاب رنک توسط کاربر و شبیه‌سازی خرید.
@@ -488,7 +494,8 @@ async def process_rank_purchase_callback(callback_query: types.CallbackQuery, ca
     await state.clear() # پاک کردن وضعیت کاربر
 
 # --- پردازش خرید کوین از فروشگاه ---
-@dp.callback_query(ShopCallback.filter(F=lambda F, callback_data: callback_data.action == "buy_coin"))
+# اصلاح شده: حذف F= و استفاده مستقیم از action
+@dp.callback_query(ShopCallback.filter(action="buy_coin"))
 async def process_coin_purchase_callback(callback_query: types.CallbackQuery, callback_data: ShopCallback, state: FSMContext):
     """
     پردازش انتخاب بسته کوین توسط کاربر و شبیه‌سازی خرید.
@@ -542,7 +549,8 @@ async def process_coin_purchase_callback(callback_query: types.CallbackQuery, ca
     await state.clear() # پاک کردن وضعیت کاربر
 
 # --- درخواست مقدار دلخواه کوین ---
-@dp.callback_query(ShopCallback.filter(F=lambda F, callback_data: callback_data.action == "custom_coin"))
+# اصلاح شده: حذف F= و استفاده مستقیم از action
+@dp.callback_query(ShopCallback.filter(action="custom_coin"))
 async def request_custom_coin_amount(callback_query: types.CallbackQuery, state: FSMContext):
     """
     کاربر درخواست وارد کردن مقدار دلخواه کوین را دارد.
@@ -614,7 +622,8 @@ async def process_custom_coin_amount(message: types.Message, state: FSMContext):
         await state.clear() # پاک کردن وضعیت کاربر پس از پردازش
 
 # --- بازگشت به منوی اصلی فروشگاه ---
-@dp.callback_query(ShopCallback.filter(F=lambda F, callback_data: callback_data.action == "open_shop"))
+# اصلاح شده: حذف F= و استفاده مستقیم از action
+@dp.callback_query(ShopCallback.filter(action="open_shop"))
 async def return_to_main_shop(callback_query: types.CallbackQuery, state: FSMContext):
     """
     بازگشت کاربر به منوی اصلی فروشگاه از بخش‌های دیگر.
@@ -669,4 +678,6 @@ async def main():
     logging.info("شروع اجرای تابع main...")
 
     # راه‌اندازی وب‌سرور Flask در یک ترد (Thread) جداگانه
-    # این کار باعث می‌شود که ربات Ai
+    # این کار باعث می‌شود که ربات Aiogram بتواند همزمان با Flask کار کند.
+    flask_thread = threading.Thread(target=run_flask_server)
+    flask_thread.daemon = True # تنظیم ترد به عنوان daemon باعث می‌شود با بسته شدن برنامه اصلی، این ترد هم بسته شود
