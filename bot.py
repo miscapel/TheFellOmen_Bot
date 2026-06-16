@@ -4,6 +4,7 @@ from datetime import datetime, timedelta
 from collections import defaultdict
 
 from aiogram import Bot, Dispatcher, Router
+from aiogram.client.default import DefaultBotProperties
 from aiogram.filters import Command
 from aiogram.types import Message, KeyboardButton, ReplyKeyboardMarkup, ChatPermissions
 from aiogram.enums import ParseMode
@@ -13,9 +14,15 @@ TOKEN = "8975820451:AAEBZjhBGdFNCjnCcvld09oItdJYnkGCsGU"
 STAFF_GROUP_ID = -1004332150226
 ADMINS = [1256603181]
 
-bot = Bot(token=TOKEN, parse_mode=ParseMode.HTML)
+# ✅ FIXED HERE
+bot = Bot(
+    token=TOKEN,
+    default=DefaultBotProperties(parse_mode=ParseMode.HTML)
+)
+
 dp = Dispatcher()
 router = Router()
+
 
 # ---------------- USERS DATABASE ----------------
 
