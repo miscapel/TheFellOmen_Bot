@@ -8,7 +8,7 @@ from aiogram.filters import Command
 from aiogram.types import Message, KeyboardButton, ReplyKeyboardMarkup, ChatPermissions
 from aiogram.enums import ParseMode
 
-TOKEN = "YOUR_BOT_TOKEN"
+TOKEN = "8975820451:AAEBZjhBGdFNCjnCcvld09oItdJYnkGCsGU"
 
 STAFF_GROUP_ID = -1004332150226
 ADMINS = [1256603181]
@@ -50,9 +50,9 @@ BAD_WORDS = ["porn", "sex", "xxx"]
 def main_menu():
     return ReplyKeyboardMarkup(
         keyboard=[
-            [KeyboardButton(text="📜 Whitelist Request")],
-            [KeyboardButton(text="💎 Server Shop")],
-            [KeyboardButton(text="🆘 Support Ticket")]
+            [KeyboardButton(text=":scroll: Whitelist Request")],
+            [KeyboardButton(text=":gem: Server Shop")],
+            [KeyboardButton(text=":sos: Support Ticket")]
         ],
         resize_keyboard=True
     )
@@ -66,39 +66,39 @@ async def start(message: Message):
     save_users(users)
 
     await message.answer(
-        "<b>👋 Welcome to TheFellOmen Server</b>\n\n"
+        "<b>:wave: Welcome to TheFellOmen Server</b>\n\n"
         "Use the menu below to interact with staff.",
         reply_markup=main_menu()
     )
 
 # ---------------- WHITELIST ----------------
 
-@router.message(lambda m: m.text == "📜 Whitelist Request")
+@router.message(lambda m: m.text == ":scroll: Whitelist Request")
 async def whitelist(message: Message):
 
     await message.answer(
-        "<b>📜 Whitelist Request</b>\n\n"
+        "<b>:scroll: Whitelist Request</b>\n\n"
         "Send your Minecraft username and description."
     )
 
 # ---------------- SHOP ----------------
 
-@router.message(lambda m: m.text == "💎 Server Shop")
+@router.message(lambda m: m.text == ":gem: Server Shop")
 async def shop(message: Message):
 
     await message.answer(
-        "<b>💎 Server Shop</b>\n"
+        "<b>:gem: Server Shop</b>\n"
         "Store link:\n"
         "https://your-store-link.com"
     )
 
 # ---------------- SUPPORT ----------------
 
-@router.message(lambda m: m.text == "🆘 Support Ticket")
+@router.message(lambda m: m.text == ":sos: Support Ticket")
 async def support(message: Message):
 
     await message.answer(
-        "<b>🆘 Support</b>\n"
+        "<b>:sos: Support</b>\n"
         "Send your problem and staff will reply."
     )
 
@@ -107,11 +107,11 @@ async def support(message: Message):
 @router.message(lambda m: m.chat.type == "private")
 async def ticket_forward(message: Message):
 
-    if message.text.startswith("/"):
+    if message.text and message.text.startswith("/"):
         return
 
     msg = (
-        "<b>📩 New Ticket</b>\n\n"
+        "<b>:envelope_with_arrow: New Ticket</b>\n\n"
         f"<b>User:</b> {message.from_user.full_name}\n"
         f"<b>ID:</b> <code>{message.from_user.id}</code>\n\n"
         f"<b>Message:</b>\n{message.text}"
@@ -120,7 +120,7 @@ async def ticket_forward(message: Message):
     await bot.send_message(STAFF_GROUP_ID, msg)
 
     await message.answer(
-        "✅ <b>Your ticket has been sent to staff.</b>"
+        ":white_check_mark: <b>Your ticket has been sent to staff.</b>"
     )
 
 # ---------------- ANNOUNCEMENT ----------------
@@ -143,13 +143,13 @@ async def announce(message: Message):
         try:
             await bot.send_message(
                 user_id,
-                f"<b>📢 Server Announcement</b>\n\n{text}"
+                f"<b>:loudspeaker: Server Announcement</b>\n\n{text}"
             )
             sent += 1
         except:
             pass
 
-    await message.answer(f"✅ Sent to {sent} users")
+    await message.answer(f":white_check_mark: Sent to {sent} users")
 
 # ---------------- GROUP SECURITY ----------------
 
@@ -169,30 +169,33 @@ async def security(message: Message):
     user_messages[user_id].append(now)
 
     if len(user_messages[user_id]) > SPAM_LIMIT:
+
         user_warnings[user_id] += 1
 
         await message.delete()
 
         await message.answer(
-            f"⚠️ <b>{message.from_user.full_name}</b> spam detected\n"
+            f":warning:️ <b>{message.from_user.full_name}</b> spam detected\n"
             f"Warn: {user_warnings[user_id]}"
         )
 
     # ---- media block ----
 
     if message.photo or message.video or message.animation:
+
         user_warnings[user_id] += 1
 
         await message.delete()
 
         await message.answer(
-            f"🚫 Media not allowed\n"
+            f":no_entry_sign: Media not allowed\n"
             f"Warn: {user_warnings[user_id]}"
         )
 
     # ---- bad words ----
 
     if message.text:
+
         txt = message.text.lower()
 
         if any(word in txt for word in BAD_WORDS):
@@ -202,7 +205,7 @@ async def security(message: Message):
             await message.delete()
 
             await message.answer(
-                f"🚫 Inappropriate message\n"
+                f":no_entry_sign: Inappropriate message\n"
                 f"Warn: {user_warnings[user_id]}"
             )
 
@@ -219,7 +222,7 @@ async def security(message: Message):
         )
 
         await message.answer(
-            f"🔇 {message.from_user.full_name} muted 10 minutes"
+            f":mute: {message.from_user.full_name} muted 10 minutes"
         )
 
     # ---- ban ----
@@ -229,7 +232,7 @@ async def security(message: Message):
         await message.chat.ban(user_id)
 
         await message.answer(
-            f"⛔ {message.from_user.full_name} banned"
+            f":no_entry: {message.from_user.full_name} banned"
         )
 
 # ---------------- MAIN ----------------
