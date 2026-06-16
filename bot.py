@@ -2,17 +2,17 @@ import logging
 import os
 import threading
 import asyncio
-from typing import Literal
+from typing import Literal, Any # Any را اضافه کردیم
 
 # --- کتابخانه‌های مورد نیاز ---
-from aiogram import Bot, Dispatcher, types # F برای فیلتر کردن حذف شده است
+from aiogram import Bot, Dispatcher, types
 from aiogram.filters.command import Command
 from aiogram.filters.callback_data import CallbackData
 from aiogram.fsm.storage.memory import MemoryStorage
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
 from aiogram.utils.keyboard import InlineKeyboardBuilder
-from aiogram.utils.markdown import hbold, hcode, hlink # برای فرمت‌دهی پیام‌ها
+from aiogram.utils.markdown import hbold, hcode, hlink
 
 # برای اجرای محلی (اگر از فایل .env استفاده می‌کنید)
 from dotenv import load_dotenv
@@ -97,7 +97,6 @@ class ShopCallback(CallbackData, prefix="shop"):
     amount: int | None = None
 
 # --- تصاویر نمونه ---
-# توجه: این مسیرها باید در واقعیت وجود داشته باشند. اگر این فایل‌ها را ندارید، از ارسال عکس صرف نظر کنید.
 PHOTO_PATHS = {
     "whitelist_success": "photos/whitelist_success.jpg",
     "rank_purchase_success": "photos/rank_purchase_success.jpg",
@@ -106,12 +105,8 @@ PHOTO_PATHS = {
 
 def get_photo_path(key: str) -> str | None:
     path = PHOTO_PATHS.get(key)
-    # در محیط Render، مسیر نسبی ممکن است متفاوت باشد.
-    # برای تست محلی، مطمئن شوید مسیر درست است.
-    # اگر فایل‌ها در پوشه 'photos' در کنار bot.py هستند، مسیر بالا درست است.
     if path and os.path.exists(path):
         return path
-    # logging.warning(f"فایل عکس برای '{key}' در مسیر '{path}' یافت نشد.")
     return None
 
 async def send_message_with_photo(
@@ -124,17 +119,12 @@ async def send_message_with_photo(
     photo_path = get_photo_path(photo_key)
     if isinstance(message, types.CallbackQuery):
         message_obj = message.message
-        chat_id = message.message.chat.id
-        message_id = message.message.message_id
     else:
         message_obj = message
-        chat_id = message.chat.id
-        message_id = message.message_id
 
     if photo_path:
         try:
             with open(photo_path, 'rb') as photo_file:
-                # اگر CallbackQuery باشد، از answer_photo استفاده کنید
                 if isinstance(message, types.CallbackQuery):
                      await message.message.answer_photo(photo=photo_file, caption=text, reply_markup=reply_markup, parse_mode=parse_mode)
                 else:
@@ -191,6 +181,7 @@ async def start_whitelist_process(message: types.Message, state: FSMContext):
     await state.set_state(UserWorkflow.selecting_reason)
     builder = InlineKeyboardBuilder()
     for reason_id, reason_data in REASONS.items():
+        # ایجاد دکمه با استفاده از pack()
         builder.add(types.InlineKeyboardButton(
             text=f"{reason_data['name']} ({reason_data['price']:,} T)",
             callback_data=WhitelistCallback(action="select_reason", reason_id=reason_id).pack()
@@ -199,71 +190,65 @@ async def start_whitelist_process(message: types.Message, state: FSMContext):
     await message.reply("لطفاً یکی از دلایل زیر را برای Whitelist انتخاب کنید:", reply_markup=builder.as_markup())
 
 # --- پردازش کلیک روی دکمه انتخاب دلیل Whitelist ---
-@dp.callback_query(WhitelistCallback.filter(WhitelistCallback.action == "select_reason"))
-async def process_reason_selection(callback_query: types.CallbackQuery, callback_data: WhitelistCallback, state: FSMContext):
-    reason_id = callback_data.reason_id
+# استفاده از filter با unpack()
+@dp.callback_query(WhitelistCallback.filter())
+async def process_whitelist_callback(callback_query: types.CallbackQuery, callback_data: WhitelistCallback, state: FSMContext):
     user_id = callback_query.from_user.id
-    if not reason_id or reason_id not in REASONS:
-        await callback_query.answer("دلیل نامعتبر است.", show_alert=True)
-        return
-    reason_data = REASONS[reason_id]
-    reason_name = reason_data["name"]
-    reason_price = reason_data["price"]
-    await state.update_data(selected_reason_id=reason_id)
-    await state.set_state(UserWorkflow.awaiting_reason_confirmation)
-    builder = InlineKeyboardBuilder()
-    builder.add(types.InlineKeyboardButton(
-        text="✅ تایید نهایی",
-        callback_data=WhitelistCallback(action="confirm_reason", reason_id=reason_id).pack()
-    ))
-    builder.add(types.InlineKeyboardButton(
-        text="❌ لغو",
-        callback_data=WhitelistCallback(action="cancel_reason").pack()
-    ))
-    builder.adjust(2)
-    text = (
-        f"شما '{hbold(reason_name)}' را انتخاب کردید.\n"
-        f"هزینه: {hbold(f'{reason_price:,} تومان')}.\n\n"
-        "آیا برای تایید نهایی و انتقال به درگاه پرداخت آماده‌اید؟"
-    )
-    # اگر پیام اصلی حاوی دکمه‌ها بود، آن را ادیت کن، در غیر این صورت جواب بده
-    if callback_query.message:
-        await callback_query.message.edit_text(text, reply_markup=builder.as_markup(), parse_mode="Markdown")
-    else: # این حالت نباید رخ دهد اگر callback_query از پیام آمده باشد
-        await callback_query.message.answer(text, reply_markup=builder.as_markup(), parse_mode="Markdown")
-    await callback_query.answer("دلیل انتخاب شد.")
+    action = callback_data.action
 
-# --- پردازش تایید نهایی خرید Whitelist ---
-@dp.callback_query(WhitelistCallback.filter(WhitelistCallback.action == "confirm_reason"))
-async def confirm_reason_purchase(callback_query: types.CallbackQuery, callback_data: WhitelistCallback, state: FSMContext):
-    reason_id = callback_data.reason_id
-    user_id = callback_query.from_user.id
-    if not reason_id or reason_id not in REASONS:
-        await callback_query.answer("خطایی رخ داد، لطفاً دوباره امتحان کنید.", show_alert=True)
+    if action == "select_reason":
+        reason_id = callback_data.reason_id
+        if not reason_id or reason_id not in REASONS:
+            await callback_query.answer("دلیل نامعتبر است.", show_alert=True)
+            return
+        reason_data = REASONS[reason_id]
+        reason_name = reason_data["name"]
+        reason_price = reason_data["price"]
+        await state.update_data(selected_reason_id=reason_id)
+        await state.set_state(UserWorkflow.awaiting_reason_confirmation)
+        builder = InlineKeyboardBuilder()
+        builder.add(types.InlineKeyboardButton(
+            text="✅ تایید نهایی",
+            callback_data=WhitelistCallback(action="confirm_reason", reason_id=reason_id).pack()
+        ))
+        builder.add(types.InlineKeyboardButton(
+            text="❌ لغو",
+            callback_data=WhitelistCallback(action="cancel_reason").pack()
+        ))
+        builder.adjust(2)
+        text = (
+            f"شما '{hbold(reason_name)}' را انتخاب کردید.\n"
+            f"هزینه: {hbold(f'{reason_price:,} تومان')}.\n\n"
+            "آیا برای تایید نهایی و انتقال به درگاه پرداخت آماده‌اید؟"
+        )
+        if callback_query.message:
+            await callback_query.message.edit_text(text, reply_markup=builder.as_markup(), parse_mode="Markdown")
+        await callback_query.answer("دلیل انتخاب شد.")
+
+    elif action == "confirm_reason":
+        reason_id = callback_data.reason_id
+        if not reason_id or reason_id not in REASONS:
+            await callback_query.answer("خطایی رخ داد، لطفاً دوباره امتحان کنید.", show_alert=True)
+            await state.clear()
+            return
+        reason_name = REASONS[reason_id]["name"]
+        reason_price = REASONS[reason_id]["price"]
+        logging.info(f"کاربر {user_id}، '{reason_name}' را با قیمت {reason_price} تایید کرد.")
+        # =====================================================
+        # === بخش پیاده‌سازی پرداخت ===
+        # =====================================================
+        text = f"پرداخت شما برای '{reason_name}' با موفقیت انجام شد!\n\n"
+        text += "اگر نیاز به کیت خاصی دارید، لطفاً با ادمین تماس بگیرید."
+        await send_message_with_photo(callback_query, text, "whitelist_success", parse_mode="Markdown")
+        await callback_query.answer("پرداخت موفق!")
         await state.clear()
-        return
-    reason_name = REASONS[reason_id]["name"]
-    reason_price = REASONS[reason_id]["price"]
-    logging.info(f"کاربر {user_id}، '{reason_name}' را با قیمت {reason_price} تایید کرد.")
-    # =====================================================
-    # === بخش پیاده‌سازی پرداخت ===
-    # (کد پرداخت شما اینجا قرار می‌گیرد)
-    # =====================================================
-    text = f"پرداخت شما برای '{reason_name}' با موفقیت انجام شد!\n\n"
-    text += "اگر نیاز به کیت خاصی دارید، لطفاً با ادمین تماس بگیرید."
-    await send_message_with_photo(callback_query, text, "whitelist_success", parse_mode="Markdown")
-    await callback_query.answer("پرداخت موفق!")
-    await state.clear()
 
-# --- پردازش دکمه لغو Whitelist ---
-@dp.callback_query(WhitelistCallback.filter(WhitelistCallback.action == "cancel_reason"))
-async def cancel_reason_purchase(callback_query: types.CallbackQuery, state: FSMContext):
-    user_id = callback_query.from_user.id
-    logging.info(f"فرآیند Whitelist توسط کاربر {user_id} لغو شد.")
-    if callback_query.message:
-        await callback_query.message.edit_text("عملیات Whitelist لغو شد.")
-    await callback_query.answer("عملیات لغو شد.")
-    await state.clear()
+    elif action == "cancel_reason":
+        logging.info(f"فرآیند Whitelist توسط کاربر {user_id} لغو شد.")
+        if callback_query.message:
+            await callback_query.message.edit_text("عملیات Whitelist لغو شد.")
+        await callback_query.answer("عملیات لغو شد.")
+        await state.clear()
 
 # --- پردازش دستور /shop ---
 @dp.message(Command("shop"))
@@ -284,84 +269,133 @@ async def open_main_shop(message: types.Message, state: FSMContext):
     await message.reply("به فروشگاه خوش آمدید! کدام بخش را می‌خواهید مشاهده کنید؟", reply_markup=builder.as_markup())
 
 # --- نمایش فروشگاه رنک ---
-@dp.callback_query(ShopCallback.filter(ShopCallback.action == "open_rank_shop"))
-async def show_rank_shop(callback_query: types.CallbackQuery, state: FSMContext):
+@dp.callback_query(ShopCallback.filter())
+async def process_shop_callback(callback_query: types.CallbackQuery, callback_data: ShopCallback, state: FSMContext):
     user_id = callback_query.from_user.id
-    logging.info(f"کاربر {user_id} فروشگاه رنک را باز کرد.")
-    await state.set_state(UserWorkflow.awaiting_rank_purchase)
-    message_text = f"🌟 {hbold('Rank Shop')} 🌟\n\n"
-    message_text += "برای خرید کیت رنک، رنک مورد نظر خود را انتخاب کنید:\n\n"
-    for item_id, item_data in RANK_SHOP_ITEMS.items():
-        message_text += f"🔹 {hbold(item_data['name'])} » {hcode(f'{item_data['price']:,} تومان')}\n"
-    message_text += "\nبرای خرید کیت رنک، پس از انتخاب رنک، لطفاً نام کیت مورد نظر (مثلاً 'کیت') را در چت بنویسید."
-    builder = InlineKeyboardBuilder()
-    for item_id, item_data in RANK_SHOP_ITEMS.items():
-        builder.add(types.InlineKeyboardButton(
-            text=f"{item_data['name']} ({item_data['price']:,} T)",
-            callback_data=ShopCallback(action="buy_rank", item_id=item_id).pack()
-        ))
-    builder.adjust(1)
-    builder.add(types.InlineKeyboardButton(
-        text="بازگشت به منوی اصلی",
-        callback_data=ShopCallback(action="open_shop").pack()
-    ))
-    if callback_query.message:
-        await callback_query.message.edit_text(message_text, reply_markup=builder.as_markup(), parse_mode="Markdown")
-    await callback_query.answer("فروشگاه رنک")
+    action = callback_data.action
 
-# --- نمایش فروشگاه کوین ---
-@dp.callback_query(ShopCallback.filter(ShopCallback.action == "open_coin_shop"))
-async def show_coin_shop(callback_query: types.CallbackQuery, state: FSMContext):
-    user_id = callback_query.from_user.id
-    logging.info(f"کاربر {user_id} فروشگاه کوین را باز کرد.")
-    await state.set_state(UserWorkflow.awaiting_coin_purchase)
-    message_text = f"💰 {hbold('Coin Shop')} 💰\n\n"
-    message_text += "مقدار کوین مورد نظر خود را انتخاب کنید:\n\n"
-    for item_id, item_data in COIN_SHOP_ITEMS.items():
-        message_text += f"🔹 {hbold(item_data['name'])} » {hcode(f'{item_data['price']:,} تومان')}\n"
-    message_text += f"\nاگر مقدار کوین مورد نظر شما بیشتر از این‌هاست، مقدار دلخواه خود را در چت بنویسید (هر کوین تقریباً {PRICE_PER_COIN:,} تومان)."
-    builder = InlineKeyboardBuilder()
-    for item_id, item_data in COIN_SHOP_ITEMS.items():
+    if action == "open_rank_shop":
+        logging.info(f"کاربر {user_id} فروشگاه رنک را باز کرد.")
+        await state.set_state(UserWorkflow.awaiting_rank_purchase)
+        message_text = f"🌟 {hbold('Rank Shop')} 🌟\n\n"
+        message_text += "برای خرید کیت رنک، رنک مورد نظر خود را انتخاب کنید:\n\n"
+        for item_id, item_data in RANK_SHOP_ITEMS.items():
+            message_text += f"🔹 {hbold(item_data['name'])} » {hcode(f'{item_data['price']:,} تومان')}\n"
+        message_text += "\nبرای خرید کیت رنک، پس از انتخاب رنک، لطفاً نام کیت مورد نظر (مثلاً: 'کیت') را در چت بنویسید."
+        builder = InlineKeyboardBuilder()
+        for item_id, item_data in RANK_SHOP_ITEMS.items():
+            builder.add(types.InlineKeyboardButton(
+                text=f"{item_data['name']} ({item_data['price']:,} T)",
+                callback_data=ShopCallback(action="buy_rank", item_id=item_id).pack()
+            ))
+        builder.adjust(1)
         builder.add(types.InlineKeyboardButton(
-            text=f"{item_data['name']} ({item_data['price']:,} T)",
-            callback_data=ShopCallback(action="buy_coin", item_id=item_id).pack()
+            text="بازگشت به منوی اصلی",
+            callback_data=ShopCallback(action="open_shop").pack()
         ))
-    builder.adjust(1)
-    builder.add(types.InlineKeyboardButton(
-        text="مقدار دلخواه",
-        callback_data=ShopCallback(action="custom_coin").pack()
-    ))
-    builder.add(types.InlineKeyboardButton(
-        text="بازگشت به منوی اصلی",
-        callback_data=ShopCallback(action="open_shop").pack()
-    ))
-    if callback_query.message:
-        await callback_query.message.edit_text(message_text, reply_markup=builder.as_markup(), parse_mode="Markdown")
-    await callback_query.answer("فروشگاه کوین")
+        if callback_query.message:
+            await callback_query.message.edit_text(message_text, reply_markup=builder.as_markup(), parse_mode="Markdown")
+        await callback_query.answer("فروشگاه رنک")
 
-# --- پردازش خرید رنک از فروشگاه ---
-@dp.callback_query(ShopCallback.filter(ShopCallback.action == "buy_rank"))
-async def process_rank_purchase_callback(callback_query: types.CallbackQuery, callback_data: ShopCallback, state: FSMContext):
-    item_id = callback_data.item_id
-    user_id = callback_query.from_user.id
-    if not item_id or item_id not in RANK_SHOP_ITEMS:
-        await callback_query.answer("آیتم نامعتبر است.", show_alert=True)
-        return
-    item_data = RANK_SHOP_ITEMS[item_id]
-    item_name = item_data["name"]
-    item_price = item_data["price"]
-    logging.info(f"کاربر {user_id} قصد خرید رنک '{item_name}' را دارد.")
-    # در این مرحله، کاربر باید نوع کیت را مشخص کند.
-    await state.update_data(selected_rank_item_id=item_id)
-    await state.set_state(UserWorkflow.awaiting_rank_purchase) # تغییر حالت برای انتظار دریافت نام کیت
-    message_text = f"شما '{hbold(item_name)}' را انتخاب کردید.\n"
-    message_text += f"هزینه: {hcode(f'{item_price:,} تومان')}.\n\n"
-    message_text += "لطفاً نام کیت مورد نظر خود را وارد کنید (مثلاً: 'کیت' یا 'Kit')."
-    builder = InlineKeyboardBuilder()
-    builder.add(types.InlineKeyboardButton(text="لغو", callback_data=ShopCallback(action="open_rank_shop").pack()))
-    if callback_query.message:
-        await callback_query.message.edit_text(message_text, reply_markup=builder.as_markup(), parse_mode="Markdown")
-    await callback_query.answer("تایید انتخاب رنک")
+    elif action == "open_coin_shop":
+        logging.info(f"کاربر {user_id} فروشگاه کوین را باز کرد.")
+        await state.set_state(UserWorkflow.awaiting_coin_purchase)
+        message_text = f"💰 {hbold('Coin Shop')} 💰\n\n"
+        message_text += "مقدار کوین مورد نظر خود را انتخاب کنید:\n\n"
+        for item_id, item_data in COIN_SHOP_ITEMS.items():
+            message_text += f"🔹 {hbold(item_data['name'])} » {hcode(f'{item_data['price']:,} تومان')}\n"
+        message_text += f"\nاگر مقدار کوین مورد نظر شما بیشتر از این‌هاست، مقدار دلخواه خود را در چت بنویسید (هر کوین تقریباً {PRICE_PER_COIN:,} تومان)."
+        builder = InlineKeyboardBuilder()
+        for item_id, item_data in COIN_SHOP_ITEMS.items():
+            builder.add(types.InlineKeyboardButton(
+                text=f"{item_data['name']} ({item_data['price']:,} T)",
+                callback_data=ShopCallback(action="buy_coin", item_id=item_id).pack()
+            ))
+        builder.adjust(1)
+        builder.add(types.InlineKeyboardButton(
+            text="مقدار دلخواه",
+            callback_data=ShopCallback(action="custom_coin").pack()
+        ))
+        builder.add(types.InlineKeyboardButton(
+            text="بازگشت به منوی اصلی",
+            callback_data=ShopCallback(action="open_shop").pack()
+        ))
+        if callback_query.message:
+            await callback_query.message.edit_text(message_text, reply_markup=builder.as_markup(), parse_mode="Markdown")
+        await callback_query.answer("فروشگاه کوین")
+
+    elif action == "buy_rank":
+        item_id = callback_data.item_id
+        if not item_id or item_id not in RANK_SHOP_ITEMS:
+            await callback_query.answer("آیتم نامعتبر است.", show_alert=True)
+            return
+        item_data = RANK_SHOP_ITEMS[item_id]
+        item_name = item_data["name"]
+        item_price = item_data["price"]
+        logging.info(f"کاربر {user_id} قصد خرید رنک '{item_name}' را دارد.")
+        await state.update_data(selected_rank_item_id=item_id)
+        await state.set_state(UserWorkflow.awaiting_rank_purchase)
+        message_text = f"شما '{hbold(item_name)}' را انتخاب کردید.\n"
+        message_text += f"هزینه: {hcode(f'{item_price:,} تومان')}.\n\n"
+        message_text += "لطفاً نام کیت مورد نظر خود را وارد کنید (مثلاً: 'کیت' یا 'Kit')."
+        builder = InlineKeyboardBuilder()
+        builder.add(types.InlineKeyboardButton(text="لغو", callback_data=ShopCallback(action="open_rank_shop").pack()))
+        if callback_query.message:
+            await callback_query.message.edit_text(message_text, reply_markup=builder.as_markup(), parse_mode="Markdown")
+        await callback_query.answer("تایید انتخاب رنک")
+
+    elif action == "buy_coin":
+        item_id = callback_data.item_id
+        if not item_id or item_id not in COIN_SHOP_ITEMS:
+            await callback_query.answer("بسته کوین نامعتبر است.", show_alert=True)
+            return
+        item_data = COIN_SHOP_ITEMS[item_id]
+        item_name = item_data["name"]
+        item_price = item_data["price"]
+        try:
+            coins_amount = int(item_id.split('_')[0])
+        except ValueError:
+            logging.error(f"فرمت item_id برای کوین نامعتبر است: {item_id}")
+            await callback_query.answer("خطایی در پردازش بسته کوین رخ داد.", show_alert=True)
+            await state.clear()
+            return
+        logging.info(f"کاربر {user_id} قصد خرید {item_name} ({coins_amount} کوین) را دارد.")
+        # =====================================================
+        # === بخش پیاده‌سازی پرداخت برای کوین ===
+        # =====================================================
+        confirmation_message = f"خرید {hbold(item_name)} با موفقیت انجام شد!\n"
+        confirmation_message += f"{hbold(f'{coins_amount} کوین')} به حساب شما اضافه خواهد شد."
+        await send_message_with_photo(callback_query, confirmation_message, "coin_purchase_success", parse_mode="Markdown")
+        await callback_query.answer("خرید کوین موفق!")
+        await state.clear()
+
+    elif action == "custom_coin":
+        logging.info(f"کاربر {user_id} درخواست مقدار دلخواه کوین را داد.")
+        await state.set_state(UserWorkflow.awaiting_custom_coin_amount)
+        message_text = "لطفاً مقدار کوین مورد نظر خود را به عدد وارد کنید.\n"
+        message_text += f"(هر کوین تقریباً {PRICE_PER_COIN:,} تومان محاسبه می‌شود.)"
+        builder = InlineKeyboardBuilder()
+        builder.add(types.InlineKeyboardButton(text="لغو", callback_data=ShopCallback(action="open_coin_shop").pack()))
+        if callback_query.message:
+            await callback_query.message.edit_text(message_text, reply_markup=builder.as_markup(), parse_mode="Markdown")
+        await callback_query.answer("وارد کردن مقدار دلخواه")
+
+    elif action == "open_shop":
+        logging.info(f"کاربر {user_id} به منوی اصلی فروشگاه بازگشت.")
+        await state.set_state(UserWorkflow.awaiting_shop_choice)
+        builder = InlineKeyboardBuilder()
+        builder.add(types.InlineKeyboardButton(
+            text="🛒 فروشگاه رنک",
+            callback_data=ShopCallback(action="open_rank_shop").pack()
+        ))
+        builder.add(types.InlineKeyboardButton(
+            text="💰 فروشگاه کوین",
+            callback_data=ShopCallback(action="open_coin_shop").pack()
+        ))
+        builder.adjust(1)
+        if callback_query.message:
+            await callback_query.message.edit_text("به منوی اصلی فروشگاه خوش آمدید! کدام بخش را می‌خواهید مشاهده کنید؟", reply_markup=builder.as_markup())
+        await callback_query.answer("منوی اصلی فروشگاه")
 
 # پردازش دریافت نام کیت پس از انتخاب رنک
 @dp.message(UserWorkflow.awaiting_rank_purchase)
@@ -382,9 +416,6 @@ async def process_rank_kit_name(message: types.Message, state: FSMContext):
 
     # =====================================================
     # === بخش پیاده‌سازی پرداخت برای رنک ===
-    # (کد پرداخت شما اینجا قرار می‌گیرد.
-    # در اینجا، فقط یک پیام تایید ارسال می‌شود.
-    # شما باید منطق پرداخت واقعی را پیاده‌سازی کنید.)
     # =====================================================
     confirmation_message = f"خرید رنک '{hbold(item_name)}' با کیت '{hbold(kit_name)}' با موفقیت انجام شد!\n"
     confirmation_message += f"هزینه: {hcode(f'{item_price:,} تومان')}.\n\n"
@@ -393,49 +424,6 @@ async def process_rank_kit_name(message: types.Message, state: FSMContext):
     await message.reply("خرید شما ثبت شد!")
     await state.clear()
 
-
-# --- پردازش خرید کوین از فروشگاه ---
-@dp.callback_query(ShopCallback.filter(ShopCallback.action == "buy_coin"))
-async def process_coin_purchase_callback(callback_query: types.CallbackQuery, callback_data: ShopCallback, state: FSMContext):
-    item_id = callback_data.item_id
-    user_id = callback_query.from_user.id
-    if not item_id or item_id not in COIN_SHOP_ITEMS:
-        await callback_query.answer("بسته کوین نامعتبر است.", show_alert=True)
-        return
-    item_data = COIN_SHOP_ITEMS[item_id]
-    item_name = item_data["name"]
-    item_price = item_data["price"]
-    try:
-        coins_amount = int(item_id.split('_')[0])
-    except ValueError:
-        logging.error(f"فرمت item_id برای کوین نامعتبر است: {item_id}")
-        await callback_query.answer("خطایی در پردازش بسته کوین رخ داد.", show_alert=True)
-        await state.clear()
-        return
-    logging.info(f"کاربر {user_id} قصد خرید {item_name} ({coins_amount} کوین) را دارد.")
-    # =====================================================
-    # === بخش پیاده‌سازی پرداخت برای کوین ===
-    # (کد پرداخت شما اینجا قرار می‌گیرد)
-    # =====================================================
-    confirmation_message = f"خرید {hbold(item_name)} با موفقیت انجام شد!\n"
-    confirmation_message += f"{hbold(f'{coins_amount} کوین')} به حساب شما اضافه خواهد شد."
-    await send_message_with_photo(callback_query, confirmation_message, "coin_purchase_success", parse_mode="Markdown")
-    await callback_query.answer("خرید کوین موفق!")
-    await state.clear()
-
-# --- درخواست مقدار دلخواه کوین ---
-@dp.callback_query(ShopCallback.filter(ShopCallback.action == "custom_coin"))
-async def request_custom_coin_amount(callback_query: types.CallbackQuery, state: FSMContext):
-    user_id = callback_query.from_user.id
-    logging.info(f"کاربر {user_id} درخواست مقدار دلخواه کوین را داد.")
-    await state.set_state(UserWorkflow.awaiting_custom_coin_amount)
-    message_text = "لطفاً مقدار کوین مورد نظر خود را به عدد وارد کنید.\n"
-    message_text += f"(هر کوین تقریباً {PRICE_PER_COIN:,} تومان محاسبه می‌شود.)"
-    builder = InlineKeyboardBuilder()
-    builder.add(types.InlineKeyboardButton(text="لغو", callback_data=ShopCallback(action="open_coin_shop").pack()))
-    if callback_query.message:
-        await callback_query.message.edit_text(message_text, reply_markup=builder.as_markup(), parse_mode="Markdown")
-    await callback_query.answer("وارد کردن مقدار دلخواه")
 
 # --- پردازش مقدار دلخواه کوین وارد شده توسط کاربر ---
 @dp.message(UserWorkflow.awaiting_custom_coin_amount)
@@ -450,8 +438,7 @@ async def process_custom_coin_amount(message: types.Message, state: FSMContext):
         logging.info(f"کاربر {user_id} درخواست {amount} کوین با قیمت تخمینی {total_price} را داد.")
         # =====================================================
         # === بخش پیاده‌سازی پرداخت برای کوین دلخواه ===
-        # (در این حالت، به جای هدایت به درگاه، کاربر را به ادمین ارجاع می‌دهیم.)
-        # ارسال پیام به گروه ادمین
+        # =====================================================
         admin_message_text = (
             f"کاربر {hbold(message.from_user.full_name)} (ID: {user_id}) درخواست خرید {hbold(f'{amount} کوین')} را دارد.\n"
             f"هزینه تقریبی: {hcode(f'{total_price:,} تومان')}.\n\n"
@@ -471,26 +458,6 @@ async def process_custom_coin_amount(message: types.Message, state: FSMContext):
     finally:
         await state.clear()
 
-# --- بازگشت به منوی اصلی فروشگاه ---
-@dp.callback_query(ShopCallback.filter(ShopCallback.action == "open_shop"))
-async def return_to_main_shop(callback_query: types.CallbackQuery, state: FSMContext):
-    user_id = callback_query.from_user.id
-    logging.info(f"کاربر {user_id} به منوی اصلی فروشگاه بازگشت.")
-    await state.set_state(UserWorkflow.awaiting_shop_choice)
-    builder = InlineKeyboardBuilder()
-    builder.add(types.InlineKeyboardButton(
-        text="🛒 فروشگاه رنک",
-        callback_data=ShopCallback(action="open_rank_shop").pack()
-    ))
-    builder.add(types.InlineKeyboardButton(
-        text="💰 فروشگاه کوین",
-        callback_data=ShopCallback(action="open_coin_shop").pack()
-    ))
-    builder.adjust(1)
-    if callback_query.message:
-        await callback_query.message.edit_text("به منوی اصلی فروشگاه خوش آمدید! کدام بخش را می‌خواهید مشاهده کنید؟", reply_markup=builder.as_markup())
-    await callback_query.answer("منوی اصلی فروشگاه")
-
 # --- وب‌سرور Flask برای Keep-Alive در Render ---
 app = Flask(__name__)
 
@@ -498,16 +465,16 @@ app = Flask(__name__)
 async def homepage():
     return "ربات TheFellOmen در حال اجراست!"
 
-# یک endpoint ساده برای دریافت webhook اگر لازم باشد (البته اینجا از polling استفاده می‌کنیم)
-@app.route('/webhook', methods=['POST'])
-async def webhook():
-    update = types.Update.model_validate(request.json)
-    await dp.feed_update(bot, update)
-    return "OK", 200
+# اگر از webhook استفاده می‌کنید، این بخش را فعال کنید
+# @app.route('/webhook', methods=['POST'])
+# async def webhook():
+#     update = types.Update.model_validate(request.json) # برای aiogram v3+
+#     await dp.feed_update(bot, update)
+#     return "OK", 200
 
 def run_flask_server():
     try:
-        # استفاده از waitress یا gunicorn برای production بهتر است، اما برای سادگی از app.run استفاده می‌کنیم
+        # Render پورت را از متغیر محیطی PORT تعیین می‌کند
         app.run(host="0.0.0.0", port=PORT, debug=False)
     except Exception as e:
         logging.error(f"خطا در اجرای وب‌سرور Flask: {e}")
@@ -518,14 +485,13 @@ async def main():
 
     # اجرای Flask در یک ترد جداگانه
     flask_thread = threading.Thread(target=run_flask_server)
-    flask_thread.daemon = True # اجازه می‌دهد برنامه اصلی بسته شود حتی اگر این ترد هنوز در حال اجرا باشد
+    flask_thread.daemon = True
     flask_thread.start()
     logging.info("ترد وب‌سرور Flask راه‌اندازی شد.")
 
     # شروع پولینگ Aiogram
     logging.info("شروع پولینگ Aiogram...")
     try:
-        # skip_updates=True برای نادیده گرفتن پیام‌هایی که ربات آفلاین بوده است
         await dp.start_polling(bot, skip_updates=True)
     except Exception as e:
         logging.error(f"خطا در هنگام اجرای پولینگ Aiogram: {e}")
