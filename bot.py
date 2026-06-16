@@ -28,7 +28,7 @@ TOKEN = "8975820451:AAEBZjhBGdFNCjnCcvld09oItdJYnkGCsGU"
 
 # 🔴 اینجا آیدی گروه استاف را وارد کن (حتما با منفی شروع شود)
 # اگر آیدی گروه را نداری، فعلاً همین بماند تا ربات لاگ بدهد
-STAFF_GROUP_ID = -1002364859610  # مثال: آیدی گروه شما
+STAFF_GROUP_ID = -1004332150226  # مثال: آیدی گروه شما
 
 logging.basicConfig(level=logging.INFO)
 bot = Bot(token=TOKEN)
