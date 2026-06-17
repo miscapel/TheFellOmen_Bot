@@ -3,11 +3,8 @@ import html
 import json
 import logging
 import os
-import re
 import threading
-import time
 import uuid
-from collections import defaultdict, deque
 from datetime import datetime
 from pathlib import Path
 
@@ -18,388 +15,749 @@ from aiogram.filters import Command
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
 from aiogram.fsm.storage.memory import MemoryStorage
-from aiogram.types import (
-    BotCommand,
-    BotCommandScopeChat,
-    BotCommandScopeDefault,
-    ChatPermissions,
-)
-from aiogram.exceptions import TelegramBadRequest, TelegramForbiddenError
+from aiogram.types import BotCommand
 from dotenv import load_dotenv
 from flask import Flask
 
-# -------------------- CONFIG --------------------
 
-logging.basicConfig(level=logging.INFO)
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s - %(levelname)s - %(message)s",
+)
+
 load_dotenv()
 
 BOT_TOKEN = os.getenv("BOT_TOKEN")
-STAFF_GROUP_ID = int(os.getenv("STAFF_GROUP_ID"))
-ADMIN_ID = int(os.getenv("ADMIN_ID"))
-PORT = int(os.getenv("PORT", 10000))
+STAFF_GROUP_ID = os.getenv("STAFF_GROUP_ID")
+ADMIN_ID = os.getenv("ADMIN_ID", "0")
+PORT = int(os.getenv("PORT", "10000"))
 
-if not BOT_TOKEN or not STAFF_GROUP_ID:
-    raise RuntimeError("Missing BOT_TOKEN or STAFF_GROUP_ID")
+WELCOME_STICKER_ID = os.getenv("WELCOME_STICKER_ID", "")
+SUCCESS_STICKER_ID = os.getenv("SUCCESS_STICKER_ID", "")
 
-bot = Bot(token=BOT_TOKEN, default=DefaultBotProperties(parse_mode=ParseMode.HTML))
+if not BOT_TOKEN:
+    raise RuntimeError("BOT_TOKEN is not set")
+
+if not STAFF_GROUP_ID:
+    raise RuntimeError("STAFF_GROUP_ID is not set")
+
+try:
+    STAFF_GROUP_ID = int(STAFF_GROUP_ID)
+except ValueError:
+    raise RuntimeError("STAFF_GROUP_ID must be a number")
+
+try:
+    ADMIN_ID = int(ADMIN_ID)
+except ValueError:
+    ADMIN_ID = 0
+
+
+bot = Bot(
+    token=BOT_TOKEN,
+    default=DefaultBotProperties(parse_mode=ParseMode.HTML),
+)
+
 dp = Dispatcher(storage=MemoryStorage())
 app = Flask(__name__)
 
-# -------------------- STATES --------------------
+USERS_FILE = Path("users.json")
+
+TICKETS = {}
+STAFF_MESSAGE_TO_TICKET = {}
+USER_IDS = set()
+
 
 class UserState(StatesGroup):
-    punishment = State()
+    punishment_appeal = State()
     whitelist = State()
-    support = State()
+    contact_staff = State()
+    rank_shop_message = State()
+    coin_shop_message = State()
+
 
 class StaffState(StatesGroup):
     replying = State()
 
-# -------------------- DATABASE --------------------
 
-USERS_FILE = Path("users.json")
-WARNS_FILE = Path("warns.json")
+def now_text() -> str:
+    return datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
-USERS = set()
-WARNS = {}
-TICKETS = {}
+
+def safe(value) -> str:
+    if value is None:
+        return "-"
+    return html.escape(str(value))
+
+
+def is_admin(user_id: int) -> bool:
+    return ADMIN_ID != 0 and user_id == ADMIN_ID
+
 
 def load_users():
-    global USERS
-    if USERS_FILE.exists():
-        USERS = set(json.loads(USERS_FILE.read_text()))
+    global USER_IDS
+
+    if not USERS_FILE.exists():
+        USER_IDS = set()
+        return
+
+    try:
+        data = json.loads(USERS_FILE.read_text(encoding="utf-8"))
+        USER_IDS = {int(user_id) for user_id in data}
+    except Exception:
+        USER_IDS = set()
+
 
 def save_users():
-    USERS_FILE.write_text(json.dumps(list(USERS)))
-
-def remember_user(user):
-    if user.id not in USERS:
-        USERS.add(user.id)
-        save_users()
-
-def load_warns():
-    global WARNS
-    if WARNS_FILE.exists():
-        WARNS = json.loads(WARNS_FILE.read_text())
-
-def save_warns():
-    WARNS_FILE.write_text(json.dumps(WARNS))
-
-def warn_key(chat_id, user_id):
-    return f"{chat_id}:{user_id}"
-
-def add_warn(chat_id, user_id):
-    key = warn_key(chat_id, user_id)
-    WARNS[key] = WARNS.get(key, 0) + 1
-    save_warns()
-    return WARNS[key]
-
-def clear_warn(chat_id, user_id):
-    key = warn_key(chat_id, user_id)
-    if key in WARNS:
-        del WARNS[key]
-        save_warns()
-
-def get_warn(chat_id, user_id):
-    return WARNS.get(warn_key(chat_id, user_id), 0)
-
-# -------------------- KEYBOARDS --------------------
-
-def main_menu():
-    return types.InlineKeyboardMarkup(inline_keyboard=[
-        [types.InlineKeyboardButton(text="⚖️ Punishment", callback_data="menu_punishment")],
-        [types.InlineKeyboardButton(text="✅ Whitelist", callback_data="menu_whitelist")],
-        [types.InlineKeyboardButton(text="🎧 Support", callback_data="menu_support")],
-        [types.InlineKeyboardButton(text="🛒 Shop", callback_data="menu_shop")]
-    ])
-
-def shop_menu():
-    return types.InlineKeyboardMarkup(inline_keyboard=[
-        [types.InlineKeyboardButton(text="👑 Rank Shop", callback_data="shop_rank")],
-        [types.InlineKeyboardButton(text="🪙 Coin Shop", callback_data="shop_coin")],
-        [types.InlineKeyboardButton(text="🔙 Back", callback_data="menu_back")]
-    ])
-# -------------------- COMMAND MENU --------------------
-
-async def set_commands():
-    user_cmds = [
-        BotCommand(command="start", description="Main Menu"),
-        BotCommand(command="punishment", description="Appeal"),
-        BotCommand(command="whitelist", description="Whitelist"),
-        BotCommand(command="support", description="Support"),
-        BotCommand(command="shop", description="Shop"),
-    ]
-
-    await bot.set_my_commands(user_cmds, scope=BotCommandScopeDefault())
-
-    admin_cmds = user_cmds + [
-        BotCommand(command="broadcast", description="Broadcast"),
-        BotCommand(command="warns", description="Check warns"),
-        BotCommand(command="clearwarn", description="Clear warns"),
-        BotCommand(command="mute", description="Mute"),
-        BotCommand(command="unmute", description="Unmute"),
-    ]
-
-    await bot.set_my_commands(admin_cmds, scope=BotCommandScopeChat(chat_id=ADMIN_ID))
-
-
-# -------------------- START --------------------
-
-@dp.message(Command("start"))
-async def start(message: types.Message, state: FSMContext):
-    remember_user(message.from_user)
-    await state.clear()
-    await message.answer("🌙 Welcome to TheFellOmen", reply_markup=main_menu())
-
-@dp.callback_query(F.data == "menu_back")
-async def back_menu(call: types.CallbackQuery, state: FSMContext):
-    await state.clear()
-    await call.message.edit_text("🌙 Main Menu", reply_markup=main_menu())
-
-@dp.callback_query(F.data == "menu_punishment")
-async def open_punishment(call: types.CallbackQuery, state: FSMContext):
-    await state.set_state(UserState.punishment)
-    await call.message.edit_text("⚖️ Send your appeal message.")
-
-@dp.callback_query(F.data == "menu_whitelist")
-async def open_whitelist(call: types.CallbackQuery, state: FSMContext):
-    await state.set_state(UserState.whitelist)
-    await call.message.edit_text("✅ Send your Minecraft username.")
-
-@dp.callback_query(F.data == "menu_support")
-async def open_support(call: types.CallbackQuery, state: FSMContext):
-    await state.set_state(UserState.support)
-    await call.message.edit_text("🎧 Send your support message.")
-
-@dp.callback_query(F.data == "menu_shop")
-async def open_shop(call: types.CallbackQuery):
-    await call.message.edit_text("🛒 Shop Menu", reply_markup=shop_menu())
-    # -------------------- TICKETS --------------------
-
-async def send_ticket(message: types.Message, category: str):
-
-    ticket_id = str(uuid.uuid4())[:8]
-
-    TICKETS[ticket_id] = message.from_user.id
-
-    user = message.from_user
-
-    text = (
-        f"🎫 <b>New Ticket</b>\n\n"
-        f"ID: <code>{ticket_id}</code>\n"
-       f"User: {html.escape(user.full_name)}\n"
-        f"UserID: <code>{user.id}</code>\n"
-        f"Type: {category}"
-    )
-
-    keyboard = types.InlineKeyboardMarkup(
-        inline_keyboard=[
-            [
-                types.InlineKeyboardButton(text="✅ Accept", callback_data=f"accept_{ticket_id}"),
-                types.InlineKeyboardButton(text="❌ Deny", callback_data=f"deny_{ticket_id}")
-            ],
-            [
-                types.InlineKeyboardButton(text="💬 Reply", callback_data=f"reply_{ticket_id}")
-            ]
-        ]
-    )
-
-    await message.copy_to(STAFF_GROUP_I, caption=text, reply_markup=keyboard)
-
-    await message.answer("✅ Your ticket was sent to staff.")
-@dp.message(UserState.punishment)
-async def punishment_ticket(message: types.Message, state: FSMContext):
-
-    await send_ticket(message, "Punishment Appeal")
-
-    await state.clear()
-
-
-@dp.message(UserState.whitelist)
-async def whitelist_ticket(message: types.Message, state: FSMContext):
-
-    await send_ticket(message, "Whitelist")
-
-    await state.clear()
-
-
-@dp.message(UserState.support)
-async def support_ticket(message: types.Message, state: FSMContext):
-
-    await send_ticket(message, "Support")
-
-    await state.clear()
-@dp.callback_query(F.data.startswith("accept_"))
-async def accept_ticket(call: types.CallbackQuery):
-
-    ticket_id = call.data.split("_")[1]
-
-    user_id = TICKETS.get(ticket_id)
-
-    if not user_id:
-        return
-
-    await bot.send_message(user_id, "✅ Your request was accepted.")
-
-    await call.answer("Accepted")
-
-
-@dp.callback_query(F.data.startswith("deny_"))
-async def deny_ticket(call: types.CallbackQuery):
-
-    ticket_id = call.data.split("_")[1]
-
-    user_id = TICKETS.get(ticket_id)
-
-    if not user_id:
-        return
-
-    await bot.send_message(user_id, "❌ Your request was denied.")
-
-    await call.answer("Denied")
-
-
-@dp.callback_query(F.data.startswith("reply_"))
-async def reply_ticket(call: types.CallbackQuery, state: FSMContext):
-
-    ticket_id = call.data.split("_")[1]
-
-    await state.update_data(ticket=ticket_id)
-
-    await state.set_state(StaffState.replying)
-
-    await call.message.reply("Send reply message to user.")
-@dp.message(StaffState.replying)
-async def staff_reply(message: types.Message, state: FSMContext):
-
-    data = await state.get_data()
-
-    ticket_id = data.get("ticket")
-
-    user_id = TICKETS.get(ticket_id)
-
-    if not user_id:
-        return
-
-    await message.copy_to(user_id)
-
-    await message.reply("✅ Reply sent.")
-
-    await state.clear()
-@dp.message(Command("broadcast"))
-async def broadcast(message: types.Message):
-
-    if message.from_user.id != ADMIN_ID:
-        return
-
-    if not message.reply_to_message:
-        await message.reply("Reply to a message to broadcast.")
-        return
-
-    count = 0
-
-    for user in USERS:
-
-        try:
-            await message.reply_to_message.copy_to(user)
-            count += 1
-        except:
-            pass
-
-    await message.reply(f"✅ Sent to {count} users.")
-SPAM = defaultdict(lambda: deque(maxlen=5))
-
-BAD_WORDS = {
-    "fuck","shit","bitch","porn","sex","xxx","18+","nsfw","hentai",
-    "کس","کیر","جنده","پورن","سکس"
-}
-
-LINK_RE = re.compile(r"(https?://|t\.me|discord\.gg)", re.I)
-
-
-@dp.message(F.chat.type.in_({ChatType.GROUP, ChatType.SUPERGROUP}))
-async def anti_spam(message: types.Message):
-
-    user = message.from_user
-
+    try:
+        USERS_FILE.write_text(
+            json.dumps(sorted(USER_IDS), ensure_ascii=False, indent=2),
+            encoding="utf-8",
+        )
+    except Exception as error:
+        logging.warning("Could not save users: %s", error)
+
+
+def remember_user(user: types.User | None):
     if not user:
         return
 
-    text = (message.text or message.caption or "").lower()
+    if user.id not in USER_IDS:
+        USER_IDS.add(user.id)
+        save_users()
 
-    # spam detect
-    now = time.time()
-    SPAM[user.id].append(now)
 
-    if len(SPAM[user.id]) >= 5 and now - SPAM[user.id][0] < 5:
+def user_label(user: types.User) -> str:
+    username = f"@{user.username}" if user.username else user.full_name
+    return f"{safe(username)} | ID: <code>{user.id}</code>"
 
-        await message.delete()
 
+def main_menu_keyboard() -> types.InlineKeyboardMarkup:
+    return types.InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                types.InlineKeyboardButton(
+                    text="⚖️ Punishment Appeal",
+                    callback_data="menu:punishment",
+                )
+            ],
+            [
+                types.InlineKeyboardButton(
+                    text="✅ Whitelist",
+                    callback_data="menu:whitelist",
+                )
+            ],
+            [
+                types.InlineKeyboardButton(
+                    text="🎧 Contact Staff",
+                    callback_data="menu:contact",
+                )
+            ],
+            [
+                types.InlineKeyboardButton(
+                    text="🛒 Shop",
+                    callback_data="menu:shop",
+                )
+            ],
+        ]
+    )
+
+
+def shop_keyboard() -> types.InlineKeyboardMarkup:
+    return types.InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                types.InlineKeyboardButton(
+                    text="👑 Rank Shop",
+                    callback_data="shop:rank",
+                )
+            ],
+            [
+                types.InlineKeyboardButton(
+                    text="🪙 Coin Shop",
+                    callback_data="shop:coin",
+                )
+            ],
+            [
+                types.InlineKeyboardButton(
+                    text="🔙 Back",
+                    callback_data="menu:back",
+                )
+            ],
+        ]
+    )
+
+
+def staff_ticket_keyboard(ticket_id: str) -> types.InlineKeyboardMarkup:
+    return types.InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                types.InlineKeyboardButton(
+                    text="✅ Accept",
+                    callback_data=f"ticket:accept:{ticket_id}",
+                ),
+                types.InlineKeyboardButton(
+                    text="❌ Deny",
+                    callback_data=f"ticket:deny:{ticket_id}",
+                ),
+            ],
+            [
+                types.InlineKeyboardButton(
+                    text="💬 Reply",
+                    callback_data=f"ticket:reply:{ticket_id}",
+                )
+            ],
+        ]
+    )
+
+
+async def set_bot_commands():
+    commands = [
+        BotCommand(command="start", description="Main menu"),
+        BotCommand(command="help", description="Bot guide"),
+        BotCommand(command="broadcast", description="Admin announcement"),
+    ]
+    await bot.set_my_commands(commands)
+
+
+async def send_optional_sticker(chat_id: int, sticker_id: str):
+    if not sticker_id:
         return
 
-    # swear detect
-    for w in BAD_WORDS:
-        if w in text:
+    try:
+        await bot.send_sticker(chat_id=chat_id, sticker=sticker_id)
+    except Exception as error:
+        logging.warning("Could not send sticker: %s", error)
 
-            await message.delete()
 
-            return
+async def copy_message_to_user(target_user_id: int, message: types.Message):
+    try:
+        await message.copy_to(chat_id=target_user_id)
+        return True
+    except Exception as error:
+        logging.warning("Could not copy message to user %s: %s", target_user_id, error)
+        return False
 
-    # link detect
-    if LINK_RE.search(text):
 
-        await message.delete()
+async def create_ticket(
+    *,
+    ticket_type: str,
+    user: types.User,
+    header_text: str,
+    user_message: types.Message | None = None,
+) -> str:
+    ticket_id = uuid.uuid4().hex[:10]
 
+    TICKETS[ticket_id] = {
+        "id": ticket_id,
+        "type": ticket_type,
+        "user_id": user.id,
+        "user_name": user.full_name,
+        "username": user.username,
+        "created_at": now_text(),
+        "status": "open",
+    }
+
+    sent_header = await bot.send_message(
+        chat_id=STAFF_GROUP_ID,
+        text=header_text,
+        reply_markup=staff_ticket_keyboard(ticket_id),
+    )
+
+    TICKETS[ticket_id]["staff_message_id"] = sent_header.message_id
+    STAFF_MESSAGE_TO_TICKET[sent_header.message_id] = ticket_id
+
+    if user_message:
+        copied = await user_message.copy_to(chat_id=STAFF_GROUP_ID)
+        STAFF_MESSAGE_TO_TICKET[copied.message_id] = ticket_id
+
+    return ticket_id
+
+
+async def finish_user_ticket(message: types.Message, state: FSMContext):
+    await send_optional_sticker(message.chat.id, SUCCESS_STICKER_ID)
+    await message.answer(
+        "✅ درخواست شما برای استف ارسال شد.\n\n"
+        "لطفاً منتظر بررسی بمانید. اگر رسید خرید، عکس یا ویدیو فرستاده باشید، همان هم برای استف ارسال شده است."
+    )
+    await state.clear()
+
+
+@dp.message(Command("start"))
+async def start_command(message: types.Message, state: FSMContext):
+    remember_user(message.from_user)
+    await state.clear()
+
+    await send_optional_sticker(message.chat.id, WELCOME_STICKER_ID)
+
+    text = (
+        "🌙 <b>Welcome to TheFellOmen</b>\n\n"
+        "یکی از بخش‌های زیر را انتخاب کن:\n\n"
+        "⚖️ <b>Punishment Appeal</b> - درخواست بررسی بن/میوت\n"
+        "✅ <b>Whitelist</b> - درخواست وایت‌لیست\n"
+        "🎧 <b>Contact Staff</b> - ارتباط مستقیم با استف\n"
+        "🛒 <b>Shop</b> - خرید رنک و کوین"
+    )
+
+    await message.answer(text, reply_markup=main_menu_keyboard())
+
+
+@dp.message(Command("help"))
+async def help_command(message: types.Message):
+    remember_user(message.from_user)
+
+    text = (
+        "📌 <b>راهنمای ربات</b>\n\n"
+        "از /start منوی اصلی را باز کن.\n\n"
+        "در تیکت‌ها می‌توانی این‌ها را بفرستی:\n"
+        "• متن\n"
+        "• عکس\n"
+        "• ویدیو\n"
+        "• رسید خرید\n"
+        "• فایل\n"
+        "• استیکر\n\n"
+        "استف هم می‌تواند با ریپلای کردن روی تیکت، متن یا مدیا برای شما ارسال کند."
+    )
+
+    await message.answer(text)
+
+
+@dp.callback_query(F.data == "menu:back")
+async def back_to_menu(callback: types.CallbackQuery, state: FSMContext):
+    await state.clear()
+
+    await callback.message.edit_text(
+        "🌙 <b>TheFellOmen Menu</b>\n\n"
+        "یکی از بخش‌های زیر را انتخاب کن:",
+        reply_markup=main_menu_keyboard(),
+    )
+    await callback.answer()
+
+
+@dp.callback_query(F.data == "menu:punishment")
+async def open_punishment_appeal(callback: types.CallbackQuery, state: FSMContext):
+    remember_user(callback.from_user)
+    await state.set_state(UserState.punishment_appeal)
+
+    text = (
+        "⚖️ <b>Punishment Appeal</b>\n\n"
+        "پیام خودت را بفرست.\n"
+        "می‌توانی متن، عکس، ویدیو یا فایل ارسال کنی.\n\n"
+        "فرمت پیشنهادی:\n"
+        "<code>Username: Steve\n"
+        "Punishment ID: 12345\n"
+        "Reason: درخواست آن‌بن\n"
+        "Message: توضیحات کامل</code>"
+    )
+
+    await callback.message.edit_text(text)
+    await callback.answer()
+
+
+@dp.message(UserState.punishment_appeal)
+async def receive_punishment_appeal(message: types.Message, state: FSMContext):
+    remember_user(message.from_user)
+
+    text_content = message.text or message.caption or "Media/File message"
+
+    header = (
+        "⚖️ <b>New Punishment Appeal</b>\n\n"
+        f"👤 User: {user_label(message.from_user)}\n"
+        f"🕒 Time: {safe(now_text())}\n"
+        f"🆔 Ticket: <code>pending</code>\n\n"
+        f"📝 Preview:\n{safe(text_content)}"
+    )
+
+    ticket_id = await create_ticket(
+        ticket_type="Punishment Appeal",
+        user=message.from_user,
+        header_text=header,
+        user_message=message,
+    )
+
+    await bot.send_message(
+        chat_id=STAFF_GROUP_ID,
+        text=f"🆔 Ticket ID: <code>{ticket_id}</code>",
+    )
+
+    await finish_user_ticket(message, state)
+
+
+@dp.callback_query(F.data == "menu:whitelist")
+async def open_whitelist(callback: types.CallbackQuery, state: FSMContext):
+    remember_user(callback.from_user)
+    await state.set_state(UserState.whitelist)
+
+    text = (
+        "✅ <b>Whitelist Request</b>\n\n"
+        "یوزرنیم ماینکرفت خودت را بفرست.\n"
+        "اگر لازم بود، می‌توانی عکس یا ویدیو هم بفرستی."
+    )
+
+    await callback.message.edit_text(text)
+    await callback.answer()
+
+
+@dp.message(UserState.whitelist)
+async def receive_whitelist(message: types.Message, state: FSMContext):
+    remember_user(message.from_user)
+
+    text_content = message.text or message.caption or "Media/File message"
+
+    header = (
+        "✅ <b>New Whitelist Request</b>\n\n"
+        f"👤 User: {user_label(message.from_user)}\n"
+        f"🕒 Time: {safe(now_text())}\n\n"
+        f"📝 Message:\n{safe(text_content)}"
+    )
+
+    await create_ticket(
+        ticket_type="Whitelist",
+        user=message.from_user,
+        header_text=header,
+        user_message=message,
+    )
+
+    await finish_user_ticket(message, state)
+
+
+@dp.callback_query(F.data == "menu:contact")
+async def open_contact_staff(callback: types.CallbackQuery, state: FSMContext):
+    remember_user(callback.from_user)
+    await state.set_state(UserState.contact_staff)
+
+    text = (
+        "🎧 <b>Contact Staff</b>\n\n"
+        "پیام خودت را برای استف بفرست.\n"
+        "می‌توانی متن، عکس، ویدیو، فایل یا استیکر ارسال کنی.\n\n"
+        "فرمت پیشنهادی:\n"
+        "<code>Reason: مشکل خرید\n"
+        "Message: توضیحات کامل</code>"
+    )
+
+    await callback.message.edit_text(text)
+    await callback.answer()
+
+
+@dp.message(UserState.contact_staff)
+async def receive_contact_staff(message: types.Message, state: FSMContext):
+    remember_user(message.from_user)
+
+    text_content = message.text or message.caption or "Media/File message"
+
+    header = (
+        "🎧 <b>New Contact Staff Ticket</b>\n\n"
+        f"👤 User: {user_label(message.from_user)}\n"
+        f"🕒 Time: {safe(now_text())}\n\n"
+        f"📝 Message:\n{safe(text_content)}"
+    )
+
+    await create_ticket(
+        ticket_type="Contact Staff",
+        user=message.from_user,
+        header_text=header,
+        user_message=message,
+    )
+
+    await finish_user_ticket(message, state)
+
+
+@dp.callback_query(F.data == "menu:shop")
+async def open_shop(callback: types.CallbackQuery, state: FSMContext):
+    remember_user(callback.from_user)
+    await state.clear()
+
+    text = (
+        "🛒 <b>TheFellOmen Shop</b>\n\n"
+        "بخش مورد نظر را انتخاب کن:"
+    )
+
+    await callback.message.edit_text(text, reply_markup=shop_keyboard())
+    await callback.answer()
+
+
+@dp.callback_query(F.data == "shop:rank")
+async def open_rank_shop(callback: types.CallbackQuery, state: FSMContext):
+    remember_user(callback.from_user)
+    await state.set_state(UserState.rank_shop_message)
+
+    text = (
+        "👑 <b>Rank Shop</b>\n\n"
+        "VIP » 49,000 Toman\n"
+        "Elite » 100,000 Toman\n"
+        "TheFellOmen » 190,000 Toman\n"
+        "Sponsor » 250,000 Toman\n"
+        "Lover » 400,000 Toman\n\n"
+        "رنک مورد نظر، یوزرنیم و رسید خرید را بفرست.\n"
+        "می‌توانی عکس رسید یا ویدیو هم ارسال کنی."
+    )
+
+    await callback.message.edit_text(text)
+    await callback.answer()
+
+
+@dp.message(UserState.rank_shop_message)
+async def receive_rank_shop_message(message: types.Message, state: FSMContext):
+    remember_user(message.from_user)
+
+    text_content = message.text or message.caption or "Media/File message"
+
+    header = (
+        "👑 <b>New Rank Shop Request</b>\n\n"
+        f"👤 User: {user_label(message.from_user)}\n"
+        f"🕒 Time: {safe(now_text())}\n\n"
+        f"📝 Message:\n{safe(text_content)}"
+    )
+
+    await create_ticket(
+        ticket_type="Shop - Rank",
+        user=message.from_user,
+        header_text=header,
+        user_message=message,
+    )
+
+    await finish_user_ticket(message, state)
+
+
+@dp.callback_query(F.data == "shop:coin")
+async def open_coin_shop(callback: types.CallbackQuery, state: FSMContext):
+    remember_user(callback.from_user)
+    await state.set_state(UserState.coin_shop_message)
+
+    text = (
+        "🪙 <b>Coin Shop</b>\n\n"
+        "50 Coin » 15,000 Toman\n"
+        "100 Coins » 30,000 Toman\n"
+        "150 Coins » 55,000 Toman\n"
+        "200 Coins » 80,000 Toman\n"
+        "250 Coins » 150,000 Toman\n\n"
+        "مقدار کوین، یوزرنیم و رسید خرید را بفرست.\n"
+        "می‌توانی عکس رسید یا ویدیو هم ارسال کنی."
+    )
+
+    await callback.message.edit_text(text)
+    await callback.answer()
+
+
+@dp.message(UserState.coin_shop_message)
+async def receive_coin_shop_message(message: types.Message, state: FSMContext):
+    remember_user(message.from_user)
+
+    text_content = message.text or message.caption or "Media/File message"
+
+    header = (
+        "🪙 <b>New Coin Shop Request</b>\n\n"
+        f"👤 User: {user_label(message.from_user)}\n"
+        f"🕒 Time: {safe(now_text())}\n\n"
+        f"📝 Message:\n{safe(text_content)}"
+    )
+
+    await create_ticket(
+        ticket_type="Shop - Coin",
+        user=message.from_user,
+        header_text=header,
+        user_message=message,
+    )
+
+    await finish_user_ticket(message, state)
+
+
+@dp.callback_query(F.data.startswith("ticket:"))
+async def handle_ticket_buttons(callback: types.CallbackQuery, state: FSMContext):
+    parts = callback.data.split(":")
+
+    if len(parts) != 3:
+        await callback.answer("Invalid data.", show_alert=True)
         return
 
-    # gif detect
-    if message.animation:
+    _, action, ticket_id = parts
+    ticket = TICKETS.get(ticket_id)
 
-        await message.delete()
-
+    if not ticket:
+        await callback.answer("Ticket not found. Bot may have restarted.", show_alert=True)
         return
+
+    player_id = ticket["user_id"]
+
+    if action == "accept":
+        ticket["status"] = "accepted"
+
+        await send_optional_sticker(player_id, SUCCESS_STICKER_ID)
+        await bot.send_message(
+            chat_id=player_id,
+            text=(
+                "✅ <b>Your request has been accepted.</b>\n\n"
+                "درخواست شما توسط استف تایید شد."
+            ),
+        )
+
+        await callback.message.reply("✅ Accepted")
+        await callback.answer("Accepted")
+
+    elif action == "deny":
+        ticket["status"] = "denied"
+
+        await bot.send_message(
+            chat_id=player_id,
+            text=(
+                "❌ <b>Your request has been denied.</b>\n\n"
+                "درخواست شما توسط استف رد شد."
+            ),
+        )
+
+        await callback.message.reply("❌ Denied")
+        await callback.answer("Denied")
+
+    elif action == "reply":
+        await state.set_state(StaffState.replying)
+        await state.update_data(ticket_id=ticket_id)
+
+        await callback.message.reply(
+            "💬 پیام بعدی شما برای پلیر ارسال می‌شود.\n"
+            "می‌توانید متن، عکس، ویدیو، فایل یا استیکر بفرستید."
+        )
+        await callback.answer("Send your reply now")
+
+    else:
+        await callback.answer("Invalid action.", show_alert=True)
+
+
+@dp.message(StaffState.replying, F.chat.id == STAFF_GROUP_ID)
+async def staff_reply_by_button(message: types.Message, state: FSMContext):
+    data = await state.get_data()
+    ticket_id = data.get("ticket_id")
+    ticket = TICKETS.get(ticket_id)
+
+    if not ticket:
+        await message.reply("Ticket not found. Bot may have restarted.")
+        await state.clear()
+        return
+
+    ok = await copy_message_to_user(ticket["user_id"], message)
+
+    if ok:
+        await message.reply("✅ Reply sent to player.")
+    else:
+        await message.reply("❌ Could not send reply.")
+
+    await state.clear()
+
+
+@dp.message(F.chat.id == STAFF_GROUP_ID)
+async def staff_direct_reply(message: types.Message):
+    if not message.reply_to_message:
+        return
+
+    ticket_id = STAFF_MESSAGE_TO_TICKET.get(message.reply_to_message.message_id)
+
+    if not ticket_id:
+        return
+
+    ticket = TICKETS.get(ticket_id)
+
+    if not ticket:
+        await message.reply("Ticket not found. Bot may have restarted.")
+        return
+
+    ok = await copy_message_to_user(ticket["user_id"], message)
+
+    if ok:
+        await message.reply("✅ Reply sent to player.")
+    else:
+        await message.reply("❌ Could not send reply.")
+
+
+@dp.message(Command("broadcast"))
+async def broadcast_command(message: types.Message):
+    remember_user(message.from_user)
+
+    if not is_admin(message.from_user.id):
+        await message.reply("❌ You are not allowed to use broadcast.")
+        return
+
+    if not USER_IDS:
+        await message.reply("No users found yet.")
+        return
+
+    sent_count = 0
+    failed_count = 0
+
+    if message.reply_to_message:
+        for user_id in list(USER_IDS):
+            try:
+                await message.reply_to_message.copy_to(chat_id=user_id)
+                sent_count += 1
+                await asyncio.sleep(0.05)
+            except Exception:
+                failed_count += 1
+
+        await message.reply(
+            f"📣 Broadcast finished.\n\n"
+            f"✅ Sent: {sent_count}\n"
+            f"❌ Failed: {failed_count}"
+        )
+        return
+
+    text = message.text or ""
+    announcement = text.replace("/broadcast", "", 1).strip()
+
+    if not announcement:
+        await message.reply(
+            "برای ارسال همگانی یکی از این دو روش را استفاده کن:\n\n"
+            "1) <code>/broadcast متن پیام</code>\n"
+            "2) روی عکس/ویدیو/پیام ریپلای کن و بنویس <code>/broadcast</code>"
+        )
+        return
+
+    final_text = (
+        "📣 <b>TheFellOmen Announcement</b>\n\n"
+        f"{safe(announcement)}"
+    )
+
+    for user_id in list(USER_IDS):
+        try:
+            await bot.send_message(chat_id=user_id, text=final_text)
+            sent_count += 1
+            await asyncio.sleep(0.05)
+        except Exception:
+            failed_count += 1
+
+    await message.reply(
+        f"📣 Broadcast finished.\n\n"
+        f"✅ Sent: {sent_count}\n"
+        f"❌ Failed: {failed_count}"
+    )
+
+
+@dp.message(F.chat.type == ChatType.PRIVATE)
+async def private_fallback(message: types.Message):
+    remember_user(message.from_user)
+
+    await message.answer(
+        "برای استفاده از ربات، از منوی زیر انتخاب کن:",
+        reply_markup=main_menu_keyboard(),
+    )
+
+
 @app.route("/")
 def home():
-    return "Bot running"
+    return "TheFellOmen Bot is running!"
+
+
+def run_flask():
+    app.run(host="0.0.0.0", port=PORT)
 
 
 async def main():
-
     load_users()
-    load_warns()
+    await set_bot_commands()
 
-    await set_commands()
+    logging.info("Starting Flask server thread...")
+    flask_thread = threading.Thread(target=run_flask, daemon=True)
+    flask_thread.start()
 
-    threading.Thread(
-        target=lambda: app.run(host="0.0.0.0", port=PORT),
-        daemon=True
-    ).start()
-
-    await dp.start_polling(bot)
+    logging.info("Starting bot polling...")
+    await dp.start_polling(bot, skip_updates=True)
 
 
 if __name__ == "__main__":
     asyncio.run(main())
-@app.route("/")
-def home():
-    return "Bot running"
-
-
-async def main():
-
-    load_users()
-    load_warns()
-
-    await set_commands()
-
-    threading.Thread(
-        target=lambda: app.run(host="0.0.0.0", port=PORT),
-        daemon=True
-    ).start()
-
-    await dp.start_polling(bot)
-
-
-if __name__ == "__main__":
-    asyncio.run(main())
-
