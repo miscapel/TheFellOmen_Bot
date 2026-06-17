@@ -5,6 +5,7 @@ import random
 import string
 import threading
 from datetime import datetime
+
 from flask import Flask
 
 from aiogram import Bot, Dispatcher, types, F
@@ -19,11 +20,7 @@ from aiogram.fsm.storage.memory import MemoryStorage
 # ================= CONFIG =================
 
 BOT_TOKEN = os.getenv("BOT_TOKEN")
-
 STAFF_GROUP_ID = -1004332150226
-
-# استیکر خوش آمدگویی
-WELCOME_STICKER = "CAACAgQAAxkBAAEBExampleStickerID"
 
 logging.basicConfig(level=logging.INFO)
 
@@ -161,18 +158,10 @@ async def start(message: types.Message):
 از دکمه‌های زیر استفاده کنید.
 """
 
-    await message.answer_sticker(WELCOME_STICKER)
-
     await message.answer(
         text,
         reply_markup=inline_menu()
     )
-
-    await message.answer(
-        "👇",
-        reply_markup=main_menu()
-    )
-
 
 # ================= BACK =================
 
@@ -244,12 +233,10 @@ async def punish_finish(message: types.Message, state: FSMContext):
 
     TICKETS[ticket] = {"user": message.from_user.id}
 
-    username = message.from_user.username or "None"
-
     text = f"""
 ⚖️ Punishment Appeal
 
-Minecraft: {data['username']}
+Username: {data['username']}
 Punishment ID: {data['pid']}
 Reason: {data['reason']}
 
@@ -258,9 +245,7 @@ Message:
 
 Time: {now()}
 
-Telegram: @{username}
 User ID: {message.from_user.id}
-
 Ticket: {ticket}
 """
 
@@ -325,21 +310,17 @@ async def wl_finish(message: types.Message, state: FSMContext):
 
     TICKETS[ticket] = {"user": message.from_user.id}
 
-    username = message.from_user.username or "None"
-
     text = f"""
 📜 Whitelist
 
-Minecraft: {data['username']}
+Username: {data['username']}
 
 Message:
 {message.text}
 
 Time: {now()}
 
-Telegram: @{username}
 User ID: {message.from_user.id}
-
 Ticket: {ticket}
 """
 
@@ -394,8 +375,6 @@ async def contact_finish(message: types.Message, state: FSMContext):
 
     TICKETS[ticket] = {"user": message.from_user.id}
 
-    username = message.from_user.username or "None"
-
     text = f"""
 📩 Contact Staff
 
@@ -406,9 +385,7 @@ Message:
 
 Time: {now()}
 
-Telegram: @{username}
 User ID: {message.from_user.id}
-
 Ticket: {ticket}
 """
 
@@ -499,8 +476,6 @@ async def shop_finish(message: types.Message, state: FSMContext):
 
     TICKETS[ticket] = {"user": message.from_user.id}
 
-    username = message.from_user.username or "None"
-
     text = f"""
 💎 Shop Order
 
@@ -511,9 +486,7 @@ Message:
 
 Time: {now()}
 
-Telegram: @{username}
 User ID: {message.from_user.id}
-
 Ticket: {ticket}
 """
 
