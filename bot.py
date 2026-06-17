@@ -286,12 +286,15 @@ async def support_finish(message: types.Message, state: FSMContext):
 @dp.callback_query(F.data.startswith("accept_"))
 async def accept_ticket(call: types.CallbackQuery):
 
-    ticket_id = call.data.sp1]
+    ticket_id = call.data.split("_")[1]
 
     user_id = TICKETS.get(ticket_id)
 
     if user_id:
         await bot.send_message(user_id, "✅ Your request was accepted.")
+
+    await call.answer()
+
 
 @dp.callback_query(F.data.startswith("deny_"))
 async def deny_ticket(call: types.CallbackQuery):
@@ -303,6 +306,9 @@ async def deny_ticket(call: types.CallbackQuery):
     if user_id:
         await bot.send_message(user_id, "❌ Your request was denied.")
 
+    await call.answer()
+
+
 @dp.callback_query(F.data.startswith("reply_"))
 async def reply_ticket(call: types.CallbackQuery, state: FSMContext):
 
@@ -313,6 +319,8 @@ async def reply_ticket(call: types.CallbackQuery, state: FSMContext):
     await state.set_state(StaffReply.replying)
 
     await call.message.reply("Send your reply to the user.")
+
+    await call.answer()
 
 # ---------- STAFF REPLY ----------
 
