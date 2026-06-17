@@ -3,7 +3,6 @@ import os
 import json
 import random
 import string
-import html
 import threading
 from flask import Flask
 from aiogram import Bot, Dispatcher, types, F
@@ -28,17 +27,16 @@ bot = Bot(
 dp = Dispatcher(storage=MemoryStorage())
 
 TICKETS = {}
-TRANSCRIPTS = {}
 REPLY_MODE = {}
 USERS = set()
 
-# ---------------- KEEP ALIVE (Render) ----------------
+# ---------- KEEP ALIVE ----------
 
 app = Flask(__name__)
 
 @app.route("/")
 def home():
-    return "Bot Running"
+    return "Bot Online"
 
 def run():
     port = int(os.environ.get("PORT",10000))
@@ -47,7 +45,7 @@ def run():
 def keep_alive():
     threading.Thread(target=run).start()
 
-# ---------------- USERS ----------------
+# ---------- USERS ----------
 
 def load_users():
     global USERS
@@ -63,7 +61,7 @@ def add_user(uid):
     USERS.add(uid)
     save_users()
 
-# ---------------- TOOLS ----------------
+# ---------- TOOLS ----------
 
 def ticket_id():
     return "TK-" + "".join(random.choices(string.ascii_uppercase+string.digits,k=6))
@@ -82,8 +80,8 @@ def main_menu():
 def shop_menu():
     return types.InlineKeyboardMarkup(
         inline_keyboard=[
-            [types.InlineKeyboardButton(text="Rank",callback_data="rank")],
-            [types.InlineKeyboardButton(text="Coin",callback_data="coin")]
+            [types.InlineKeyboardButton(text="👑 Rank",callback_data="rank")],
+            [types.InlineKeyboardButton(text="🪙 Coin",callback_data="coin")]
         ]
     )
 
@@ -100,28 +98,7 @@ def staff_buttons(ticket):
         ]
     )
 
-# ---------------- TRANSCRIPT ----------------
-
-def create_transcript(ticket):
-
-    messages = TRANSCRIPTS.get(ticket,[])
-
-    html_content = "<html><body>"
-    html_content += f"<h2>Transcript {ticket}</h2><hr>"
-
-    for m in messages:
-        html_content += f"<p><b>{html.escape(m['author'])}</b>: {html.escape(m['text'])}</p>"
-
-    html_content += "</body></html>"
-
-    filename = f"transcript_{ticket}.html"
-
-    with open(filename,"w",encoding="utf-8") as f:
-        f.write(html_content)
-
-    return filename
-
-# ---------------- STATES ----------------
+# ---------- STATES ----------
 
 class Punish(StatesGroup):
     username = State()
@@ -141,7 +118,7 @@ class Shop(StatesGroup):
     category = State()
     message = State()
 
-# ---------------- START ----------------
+# ---------- START ----------
 
 @dp.message(Command("start"))
 async def start(message:types.Message):
@@ -149,20 +126,27 @@ async def start(message:types.Message):
     add_user(message.from_user.id)
 
     text = """
-👋 Welcome to TheFellOmen Support Center
+👋 Welcome to <b>TheFellOmen Support Center</b>
 
-Please choose an option below
+If you need help, want to appeal a punishment, request whitelist, 
+or contact the staff team, you can easily do it here.
+
+Please choose one of the options below.
 """
 
     await message.answer(text,reply_markup=main_menu())
 
-# ---------------- PUNISHMENT ----------------
+# ---------- PUNISHMENT ----------
 
 @dp.message(F.text=="🚫 Punishment Appeal")
 async def punish_start(message:types.Message,state:FSMContext):
 
     await state.set_state(Punish.username)
-    await message.answer("🎮 Minecraft username?")
+
+    await message.answer(
+        "🚫 <b>Punishment Appeal</b>\n\n"
+        "Please send your Minecraft username so we can locate your punishment record."
+    )
 
 @dp.message(Punish.username)
 async def punish_user(message:types.Message,state:FSMContext):
@@ -171,7 +155,9 @@ async def punish_user(message:types.Message,state:FSMContext):
 
     await state.set_state(Punish.pid)
 
-    await message.answer("🆔 Punishment ID?")
+    await message.answer(
+        "🆔 Please send the <b>Punishment ID</b> you received from the server."
+    )
 
 @dp.message(Punish.pid)
 async def punish_pid(message:types.Message,state:FSMContext):
@@ -180,7 +166,9 @@ async def punish_pid(message:types.Message,state:FSMContext):
 
     await state.set_state(Punish.reason)
 
-    await message.answer("📄 Reason?")
+    await message.answer(
+        "📄 What was the reason of the punishment?"
+    )
 
 @dp.message(Punish.reason)
 async def punish_reason(message:types.Message,state:FSMContext):
@@ -189,7 +177,9 @@ async def punish_reason(message:types.Message,state:FSMContext):
 
     await state.set_state(Punish.message)
 
-    await message.answer("✏️ Full explanation")
+    await message.answer(
+        "✏️ Please explain why you think the punishment should be removed."
+    )
 
 @dp.message(Punish.message)
 async def punish_finish(message:types.Message,state:FSMContext):
@@ -200,37 +190,47 @@ async def punish_finish(message:types.Message,state:FSMContext):
 
     TICKETS[ticket]={"user":message.from_user.id}
 
-    TRANSCRIPTS[ticket]=[]
-
     text=f"""
-🚫 Punishment Appeal
+🚫 <b>Punishment Appeal Ticket</b>
 
-🎮 {data['username']}
-🆔 {data['pid']}
+🎫 Ticket ID: {ticket}
 
-📄 {data['reason']}
+🎮 Minecraft Username:
+{data['username']}
 
-💬 {message.text}
+🆔 Punishment ID:
+{data['pid']}
 
-👤 @{message.from_user.username}
+📄 Reason:
+{data['reason']}
 
-🎫 {ticket}
+💬 Player Explanation:
+{message.text}
+
+👤 Telegram:
+@{message.from_user.username}
 """
 
     await bot.send_message(STAFF_GROUP_ID,text,reply_markup=staff_buttons(ticket))
 
-    await message.answer("✅ Ticket sent to staff",reply_markup=main_menu())
+    await message.answer(
+        "✅ Your appeal has been successfully submitted.\n\n"
+        "Our staff team will review your request and respond as soon as possible."
+    )
 
     await state.clear()
 
-# ---------------- WHITELIST ----------------
+# ---------- WHITELIST ----------
 
 @dp.message(F.text=="✅ Whitelist Request")
 async def wl_start(message:types.Message,state:FSMContext):
 
     await state.set_state(Whitelist.username)
 
-    await message.answer("🎮 Minecraft username")
+    await message.answer(
+        "✅ <b>Whitelist Request</b>\n\n"
+        "Please send your Minecraft username."
+    )
 
 @dp.message(Whitelist.username)
 async def wl_user(message:types.Message,state:FSMContext):
@@ -239,7 +239,9 @@ async def wl_user(message:types.Message,state:FSMContext):
 
     await state.set_state(Whitelist.message)
 
-    await message.answer("💬 Message")
+    await message.answer(
+        "💬 If you want, write a short message for the staff team."
+    )
 
 @dp.message(Whitelist.message)
 async def wl_finish(message:types.Message,state:FSMContext):
@@ -250,34 +252,40 @@ async def wl_finish(message:types.Message,state:FSMContext):
 
     TICKETS[ticket]={"user":message.from_user.id}
 
-    TRANSCRIPTS[ticket]=[]
-
     text=f"""
-✅ Whitelist Request
+✅ <b>Whitelist Request</b>
 
-🎮 {data['username']}
+🎫 Ticket ID: {ticket}
 
-💬 {message.text}
+🎮 Minecraft Username:
+{data['username']}
 
-👤 @{message.from_user.username}
+💬 Message:
+{message.text}
 
-🎫 {ticket}
+👤 Telegram:
+@{message.from_user.username}
 """
 
     await bot.send_message(STAFF_GROUP_ID,text,reply_markup=staff_buttons(ticket))
 
-    await message.answer("✅ Request sent",reply_markup=main_menu())
+    await message.answer(
+        "✅ Your whitelist request has been sent to the staff team."
+    )
 
     await state.clear()
 
-# ---------------- CONTACT ----------------
+# ---------- CONTACT ----------
 
 @dp.message(F.text=="👨‍💻 Contact Staff")
 async def contact_start(message:types.Message,state:FSMContext):
 
     await state.set_state(Contact.subject)
 
-    await message.answer("📌 Subject")
+    await message.answer(
+        "👨‍💻 <b>Contact Staff</b>\n\n"
+        "Please send the subject of your message."
+    )
 
 @dp.message(Contact.subject)
 async def contact_subject(message:types.Message,state:FSMContext):
@@ -286,7 +294,9 @@ async def contact_subject(message:types.Message,state:FSMContext):
 
     await state.set_state(Contact.message)
 
-    await message.answer("💬 Message")
+    await message.answer(
+        "💬 Now write the message you want to send to the staff team."
+    )
 
 @dp.message(Contact.message)
 async def contact_finish(message:types.Message,state:FSMContext):
@@ -297,32 +307,39 @@ async def contact_finish(message:types.Message,state:FSMContext):
 
     TICKETS[ticket]={"user":message.from_user.id}
 
-    TRANSCRIPTS[ticket]=[]
-
     text=f"""
-👨‍💻 Contact Staff
+👨‍💻 <b>Support Ticket</b>
 
-📌 {data['subject']}
+🎫 Ticket ID: {ticket}
 
-💬 {message.text}
+📌 Subject:
+{data['subject']}
 
-👤 @{message.from_user.username}
+💬 Message:
+{message.text}
 
-🎫 {ticket}
+👤 Telegram:
+@{message.from_user.username}
 """
 
     await bot.send_message(STAFF_GROUP_ID,text,reply_markup=staff_buttons(ticket))
 
-    await message.answer("✅ Message sent",reply_markup=main_menu())
+    await message.answer(
+        "✅ Your support message has been delivered to the staff team."
+    )
 
     await state.clear()
 
-# ---------------- SHOP ----------------
+# ---------- SHOP ----------
 
 @dp.message(F.text=="🛒 Server Shop")
 async def shop(message:types.Message):
 
-    await message.answer("🛒 Shop",reply_markup=shop_menu())
+    await message.answer(
+        "🛒 <b>TheFellOmen Server Shop</b>\n\n"
+        "Choose the category you want to buy from."
+        ,reply_markup=shop_menu()
+    )
 
 @dp.callback_query(F.data=="rank")
 async def rank(callback:types.CallbackQuery,state:FSMContext):
@@ -331,11 +348,15 @@ async def rank(callback:types.CallbackQuery,state:FSMContext):
     await state.set_state(Shop.message)
 
     text="""
+👑 <b>Rank Shop</b>
+
 Vip » 49,000
 Elite » 100,000
 TheFellOmen » 190,000
 Sponsor » 250,000
 Lover » 400,000
+
+Write the rank you want to buy.
 """
 
     await callback.message.edit_text(text)
@@ -347,11 +368,15 @@ async def coin(callback:types.CallbackQuery,state:FSMContext):
     await state.set_state(Shop.message)
 
     text="""
+🪙 <b>Coin Shop</b>
+
 50 Coin » 15,000
 100 Coin » 30,000
 150 Coin » 55,000
 200 Coin » 80,000
 250 Coin » 150,000
+
+Write how many coins you want.
 """
 
     await callback.message.edit_text(text)
@@ -366,24 +391,29 @@ async def shop_finish(message:types.Message,state:FSMContext):
     TICKETS[ticket]={"user":message.from_user.id}
 
     text=f"""
-🛒 Shop Order
+🛒 <b>Shop Order</b>
 
-📦 {data['category']}
+🎫 Ticket ID: {ticket}
 
-💬 {message.text}
+📦 Category:
+{data['category']}
 
-👤 @{message.from_user.username}
+💬 Order Details:
+{message.text}
 
-🎫 {ticket}
+👤 Telegram:
+@{message.from_user.username}
 """
 
     await bot.send_message(STAFF_GROUP_ID,text,reply_markup=staff_buttons(ticket))
 
-    await message.answer("✅ Order sent",reply_markup=main_menu())
+    await message.answer(
+        "✅ Your order request has been sent to the staff team."
+    )
 
     await state.clear()
 
-# ---------------- STAFF ACTIONS ----------------
+# ---------- STAFF BUTTONS ----------
 
 @dp.callback_query(F.data.startswith("accept:"))
 async def accept_ticket(callback:types.CallbackQuery):
@@ -393,11 +423,10 @@ async def accept_ticket(callback:types.CallbackQuery):
     user = TICKETS.get(ticket,{}).get("user")
 
     if user:
-        await bot.send_message(user,f"✅ Your ticket {ticket} accepted")
-
-    file=create_transcript(ticket)
-
-    await bot.send_document(STAFF_GROUP_ID,types.FSInputFile(file))
+        await bot.send_message(
+            user,
+            f"✅ Your ticket {ticket} has been accepted by the staff team."
+        )
 
     await callback.message.edit_reply_markup()
 
@@ -409,11 +438,10 @@ async def deny_ticket(callback:types.CallbackQuery):
     user = TICKETS.get(ticket,{}).get("user")
 
     if user:
-        await bot.send_message(user,f"❌ Your ticket {ticket} denied")
-
-    file=create_transcript(ticket)
-
-    await bot.send_document(STAFF_GROUP_ID,types.FSInputFile(file))
+        await bot.send_message(
+            user,
+            f"❌ Your ticket {ticket} has been denied by the staff team."
+        )
 
     await callback.message.edit_reply_markup()
 
@@ -426,7 +454,9 @@ async def reply_ticket(callback:types.CallbackQuery):
 
     REPLY_MODE[callback.from_user.id]={"ticket":ticket,"user":user}
 
-    await callback.message.reply("💬 Send reply")
+    await callback.message.reply(
+        "💬 Please send the message you want to deliver to the player."
+    )
 
 @dp.message(F.chat.id==STAFF_GROUP_ID)
 async def staff_reply(message:types.Message):
@@ -436,32 +466,16 @@ async def staff_reply(message:types.Message):
 
     data=REPLY_MODE[message.from_user.id]
 
-    await bot.send_message(data["user"],f"💬 Staff Reply\n\n{message.text}")
+    await bot.send_message(
+        data["user"],
+        f"💬 <b>Message From Staff</b>\n\n{message.text}"
+    )
 
-    TRANSCRIPTS[data["ticket"]].append({"author":"Staff","text":message.text})
+    await message.reply("✅ Reply sent to player.")
 
     del REPLY_MODE[message.from_user.id]
 
-# ---------------- BROADCAST ----------------
-
-@dp.message(Command("broadcast"))
-async def broadcast(message:types.Message):
-
-    if message.chat.id != STAFF_GROUP_ID:
-        return
-
-    if not message.reply_to_message:
-        return
-
-    msg = message.reply_to_message.text
-
-    for u in USERS:
-        try:
-            await bot.send_message(u,msg)
-        except:
-            pass
-
-# ---------------- MAIN ----------------
+# ---------- MAIN ----------
 
 async def main():
 
