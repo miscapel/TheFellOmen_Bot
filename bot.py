@@ -17,13 +17,16 @@ BOT_TOKEN = os.getenv("BOT_TOKEN")
 
 STAFF_GROUP_ID = -1004332150226
 
+WELCOME_STICKER = "CAACAgIAAxkBAAE"
+TICKET_STICKER = "CAACAgIAAxkBAAE"
+
 bot = Bot(token=BOT_TOKEN,default=DefaultBotProperties(parse_mode=ParseMode.HTML))
 dp = Dispatcher(storage=MemoryStorage())
 
 TICKETS = {}
 REPLY_MODE = {}
 
-# ---------------- KEEP ALIVE (Render) ----------------
+# ---------------- KEEP ALIVE ----------------
 
 app = Flask(__name__)
 
@@ -46,10 +49,10 @@ def ticket_id():
 def main_menu():
     return types.ReplyKeyboardMarkup(
         keyboard=[
-            [types.KeyboardButton(text="🚫 اعتراض به مجازات")],
-            [types.KeyboardButton(text="✅ درخواست وایت لیست")],
-            [types.KeyboardButton(text="👨‍💻 ارتباط با استاف")],
-            [types.KeyboardButton(text="🛒 فروشگاه سرور")]
+            [types.KeyboardButton(text="🚫 Punishment Appeal")],
+            [types.KeyboardButton(text="✅ Whitelist Request")],
+            [types.KeyboardButton(text="👨‍💻 Contact Staff")],
+            [types.KeyboardButton(text="🛒 Server Shop")]
         ],
         resize_keyboard=True
     )
@@ -58,8 +61,18 @@ def shop_menu():
     return types.InlineKeyboardMarkup(
         inline_keyboard=[
             [
-                types.InlineKeyboardButton(text="🏆 Rank",callback_data="shop_rank"),
-                types.InlineKeyboardButton(text="🪙 Coin",callback_data="shop_coin")
+                types.InlineKeyboardButton(text="Rank",callback_data="shop_rank"),
+                types.InlineKeyboardButton(text="Coin",callback_data="shop_coin")
+            ]
+        ]
+    )
+
+def ticket_panel(ticket):
+    return types.InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                types.InlineKeyboardButton(text="Reply",callback_data=f"reply:{ticket}"),
+                types.InlineKeyboardButton(text="Close",callback_data=f"close:{ticket}")
             ]
         ]
     )
@@ -68,11 +81,11 @@ def staff_buttons(ticket):
     return types.InlineKeyboardMarkup(
         inline_keyboard=[
             [
-                types.InlineKeyboardButton(text="✅ Accept",callback_data=f"accept:{ticket}"),
-                types.InlineKeyboardButton(text="❌ Deny",callback_data=f"deny:{ticket}")
+                types.InlineKeyboardButton(text="Accept",callback_data=f"accept:{ticket}"),
+                types.InlineKeyboardButton(text="Deny",callback_data=f"deny:{ticket}")
             ],
             [
-                types.InlineKeyboardButton(text="💬 Reply",callback_data=f"reply:{ticket}")
+                types.InlineKeyboardButton(text="Reply",callback_data=f"reply:{ticket}")
             ]
         ]
     )
@@ -96,35 +109,31 @@ class ShopState(StatesGroup):
 @dp.message(Command("start"))
 async def start(message:types.Message):
 
+    await bot.send_sticker(message.chat.id,WELCOME_STICKER)
+
     text = """
 🎮 به ربات پشتیبانی سرور خوش آمدید.
 
 از طریق این ربات می‌توانید:
 
-🚫 اعتراض به مجازات ثبت کنید  
-✅ درخواست وایت لیست بدهید  
-👨‍💻 با استاف ارتباط بگیرید  
-🛒 از فروشگاه سرور خرید انجام دهید  
+🚫 اعتراض به مجازات ثبت کنید
+✅ درخواست وایت لیست بدهید
+👨‍💻 با استف ارتباط بگیرید
+🛒 از فروشگاه سرور خرید کنید
 
-لطفاً یکی از گزینه‌های زیر را انتخاب کنید تا تیکت شما برای تیم استاف ارسال شود.
+لطفاً یکی از گزینه‌های زیر را انتخاب کنید.
 """
 
     await message.answer(text,reply_markup=main_menu())
 
 # ---------------- PUNISHMENT ----------------
 
-@dp.message(F.text == "🚫 اعتراض به مجازات")
+@dp.message(F.text == "🚫 Punishment Appeal")
 async def punish_start(message:types.Message,state:FSMContext):
 
     await state.set_state(Punish.username)
 
-    await message.answer(
-"""
-مرحله 1 از 4
-
-لطفاً نام کاربری ماینکرفت خود را ارسال کنید.
-"""
-)
+    await message.answer("مرحله 1 از 4\nیوزرنیم ماینکرفت خود را ارسال کنید.")
 
 @dp.message(Punish.username)
 async def punish_user(message:types.Message,state:FSMContext):
@@ -133,7 +142,7 @@ async def punish_user(message:types.Message,state:FSMContext):
 
     await state.set_state(Punish.pid)
 
-    await message.answer("مرحله 2 از 4\nآیدی مجازات (Punishment ID) را ارسال کنید.")
+    await message.answer("مرحله 2 از 4\nPunishment ID را ارسال کنید.")
 
 @dp.message(Punish.pid)
 async def punish_pid(message:types.Message,state:FSMContext):
@@ -142,7 +151,7 @@ async def punish_pid(message:types.Message,state:FSMContext):
 
     await state.set_state(Punish.reason)
 
-    await message.answer("مرحله 3 از 4\nدلیل مجازات چه بوده است؟")
+    await message.answer("مرحله 3 از 4\nدلیل مجازات چه بوده؟")
 
 @dp.message(Punish.reason)
 async def punish_reason(message:types.Message,state:FSMContext):
@@ -151,7 +160,7 @@ async def punish_reason(message:types.Message,state:FSMContext):
 
     await state.set_state(Punish.explain)
 
-    await message.answer("مرحله 4 از 4\nتوضیح دهید چرا فکر می‌کنید این مجازات باید برداشته شود.")
+    await message.answer("مرحله 4 از 4\nچرا باید این مجازات برداشته شود؟")
 
 @dp.message(Punish.explain)
 async def punish_finish(message:types.Message,state:FSMContext):
@@ -162,68 +171,85 @@ async def punish_finish(message:types.Message,state:FSMContext):
 
     TICKETS[ticket] = {"user":message.from_user.id,"status":"open"}
 
+    await bot.send_sticker(message.chat.id,TICKET_STICKER)
+
     text = f"""
-🚫 اعتراض به مجازات
+🚫 تیکت اعتراض به مجازات
 
-🎫 Ticket ID: {ticket}
+Ticket ID: {ticket}
 
-👤 Username
+Username:
 {data['username']}
 
-🆔 Punishment ID
+Punishment ID:
 {data['pid']}
 
-📄 Reason
+Reason:
 {data['reason']}
 
-✏️ Explanation
+Explanation:
 {message.text}
 
-📱 Telegram
+User:
 @{message.from_user.username}
 """
 
-    await bot.send_message(STAFF_GROUP_ID,text,reply_markup=staff_buttons(ticket))
+    await bot.send_message(STAFF_GROUP_ID,text,reply_markup=ticket_panel(ticket))
 
-    await message.answer("✅ اعتراض شما برای استاف ارسال شد.")
+    await message.answer("✅ تیکت شما برای تیم استف ارسال شد.")
 
     await state.clear()
 
-# ---------------- WHITELIST ----------------
-
-@dp.message(F.text == "✅ درخواست وایت لیست")
-async def whitelist(message:types.Message,state:FSMContext):
-
-    await state.update_data(type="Whitelist Request")
-    await state.set_state(SimpleTicket.message)
-
-    await message.answer(
-"""
-✅ درخواست وایت لیست
-
-لطفاً نام کاربری ماینکرفت خود و توضیح کوتاهی ارسال کنید.
-"""
-)
-
 # ---------------- CONTACT ----------------
 
-@dp.message(F.text == "👨‍💻 ارتباط با استاف")
+@dp.message(F.text == "👨‍💻 Contact Staff")
 async def contact(message:types.Message,state:FSMContext):
 
     await state.update_data(type="Contact Staff")
     await state.set_state(SimpleTicket.message)
 
-    await message.answer(
-"""
-👨‍💻 ارتباط با استاف
+    await message.answer("پیام خود را برای استف ارسال کنید.")
 
-پیام خود را ارسال کنید.
+# ---------------- MEDIA ----------------
+
+@dp.message(SimpleTicket.message, F.photo | F.video | F.document)
+async def media_ticket(message:types.Message,state:FSMContext):
+
+    data = await state.get_data()
+
+    ticket = ticket_id()
+
+    TICKETS[ticket] = {"user":message.from_user.id,"status":"open"}
+
+    caption=f"""
+🎫 تیکت جدید
+
+نوع:
+{data['type']}
+
+کاربر:
+@{message.from_user.username}
+
+Ticket:
+{ticket}
 """
-)
+
+    if message.photo:
+        await bot.send_photo(STAFF_GROUP_ID,message.photo[-1].file_id,caption=caption,reply_markup=ticket_panel(ticket))
+
+    if message.video:
+        await bot.send_video(STAFF_GROUP_ID,message.video.file_id,caption=caption,reply_markup=ticket_panel(ticket))
+
+    if message.document:
+        await bot.send_document(STAFF_GROUP_ID,message.document.file_id,caption=caption,reply_markup=ticket_panel(ticket))
+
+    await message.answer("✅ تیکت شما برای استف ارسال شد.")
+
+    await state.clear()
 
 # ---------------- SHOP ----------------
 
-@dp.message(F.text == "🛒 فروشگاه سرور")
+@dp.message(F.text == "🛒 Server Shop")
 async def shop(message:types.Message):
 
     await message.answer(
@@ -231,19 +257,15 @@ async def shop(message:types.Message):
 🛒 فروشگاه سرور
 
 رنک ها و کوین ها در سرور
-
-یکی از گزینه‌های زیر را انتخاب کنید.
 """,
 reply_markup=shop_menu()
 )
-
-# ---------------- RANK ----------------
 
 @dp.callback_query(F.data == "shop_rank")
 async def rank(callback:types.CallbackQuery,state:FSMContext):
 
     text = """
-🏆 Rank Shop
+Rank Shop
 
 Vip » 49,000 Toman
 Elite » 100,000 Toman
@@ -251,7 +273,7 @@ TheFellOmen » 190,000 Toman
 Sponsor » 250,000 Toman
 Lover » 400,000 Toman
 
-اگر فقط نیاز به کیت رنک دارید رنک مورد نظر و کیت ای که میخواهید را بنویسید
+اگر فقط نیاز به کیت رنک دارید رنک مورد نظر و کیت مورد نظر را بنویسید
 مثلا:
 کیت رنک الایت
 """
@@ -261,13 +283,11 @@ Lover » 400,000 Toman
     await state.update_data(type="Rank Shop")
     await state.set_state(ShopState.message)
 
-# ---------------- COIN ----------------
-
 @dp.callback_query(F.data == "shop_coin")
 async def coin(callback:types.CallbackQuery,state:FSMContext):
 
     text = """
-🪙 Coin Shop
+Coin Shop
 
 50 Coin » 15,000 Toman
 100 Coins » 30,000 Toman
@@ -275,8 +295,7 @@ async def coin(callback:types.CallbackQuery,state:FSMContext):
 200 Coins » 80,000 Toman
 250 Coins » 150,000 Toman
 
-اگر مقدار کوین ای که میخواهید بیشتر از این هاست
-مقدار مورد نظر خودتون رو تو چت بنویسید
+اگر مقدار کوین بیشتری میخواهید مقدار مورد نظر را در چت بنویسید
 """
 
     await callback.message.edit_text(text)
@@ -284,87 +303,69 @@ async def coin(callback:types.CallbackQuery,state:FSMContext):
     await state.update_data(type="Coin Shop")
     await state.set_state(ShopState.message)
 
-# ---------------- SHOP MESSAGE ----------------
+# ---------------- SHOP ORDER ----------------
 
 @dp.message(ShopState.message)
-async def shop_ticket(message:types.Message,state:FSMContext):
+async def shop_order(message:types.Message,state:FSMContext):
 
     data = await state.get_data()
+
     ticket = ticket_id()
 
     TICKETS[ticket] = {"user":message.from_user.id,"status":"open"}
 
-    text = f"""
+    text=f"""
 🛒 سفارش فروشگاه
 
-🎫 Ticket ID: {ticket}
+Ticket ID: {ticket}
 
-📦 Type
+Type:
 {data['type']}
 
-👤 User
+User:
 @{message.from_user.username}
 
-📝 Order
+Order:
 {message.text}
 """
 
     await bot.send_message(STAFF_GROUP_ID,text,reply_markup=staff_buttons(ticket))
 
-    await message.answer("✅ سفارش شما برای استاف ارسال شد.")
+    await message.answer("✅ سفارش شما برای استف ارسال شد.")
 
     await state.clear()
 
-# ---------------- ACCEPT ----------------
+# ---------------- CLOSE ----------------
 
-@dp.callback_query(F.data.startswith("accept:"))
-async def accept(callback:types.CallbackQuery):
-
-    ticket = callback.data.split(":")[1]
-
-    if TICKETS[ticket]["status"] == "accepted":
-        await callback.answer("قبلاً Accept شده",show_alert=True)
-        return
-
-    TICKETS[ticket]["status"] = "accepted"
-
-    user = TICKETS[ticket]["user"]
-
-    await bot.send_message(user,f"✅ تیکت {ticket} توسط استاف پذیرفته شد.")
-
-    await callback.answer("Ticket Accepted")
-
-# ---------------- DENY ----------------
-
-@dp.callback_query(F.data.startswith("deny:"))
-async def deny(callback:types.CallbackQuery):
+@dp.callback_query(F.data.startswith("close:"))
+async def close_ticket(callback:types.CallbackQuery):
 
     ticket = callback.data.split(":")[1]
 
-    if TICKETS[ticket]["status"] == "denied":
-        await callback.answer("قبلاً رد شده",show_alert=True)
+    if TICKETS[ticket]["status"] == "closed":
+        await callback.answer("Ticket already closed",show_alert=True)
         return
 
-    TICKETS[ticket]["status"] = "denied"
+    TICKETS[ticket]["status"]="closed"
 
-    user = TICKETS[ticket]["user"]
+    user=TICKETS[ticket]["user"]
 
-    await bot.send_message(user,f"❌ تیکت {ticket} رد شد.")
+    await bot.send_message(user,f"🔒 تیکت {ticket} بسته شد.")
 
-    await callback.answer("Ticket Denied")
+    await callback.answer("Ticket Closed")
 
 # ---------------- REPLY ----------------
 
 @dp.callback_query(F.data.startswith("reply:"))
-async def reply(callback:types.CallbackQuery):
+async def reply_ticket(callback:types.CallbackQuery):
 
-    ticket = callback.data.split(":")[1]
+    ticket=callback.data.split(":")[1]
 
-    user = TICKETS[ticket]["user"]
+    user=TICKETS[ticket]["user"]
 
-    REPLY_MODE[callback.from_user.id] = user
+    REPLY_MODE[callback.from_user.id]=user
 
-    await callback.message.reply("💬 پاسخ خود را ارسال کنید.")
+    await callback.message.reply("پاسخ خود را ارسال کنید.")
 
 @dp.message(F.chat.id == STAFF_GROUP_ID)
 async def staff_reply(message:types.Message):
@@ -372,9 +373,9 @@ async def staff_reply(message:types.Message):
     if message.from_user.id not in REPLY_MODE:
         return
 
-    user = REPLY_MODE[message.from_user.id]
+    user=REPLY_MODE[message.from_user.id]
 
-    await bot.send_message(user,f"💬 پاسخ استاف:\n\n{message.text}")
+    await bot.send_message(user,f"👮 پاسخ استف\n\n{message.text}")
 
     del REPLY_MODE[message.from_user.id]
 
@@ -388,5 +389,5 @@ async def main():
 
     await dp.start_polling(bot)
 
-if __name__ == "__main__":
+if __name__=="__main__":
     asyncio.run(main())
