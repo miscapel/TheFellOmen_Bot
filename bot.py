@@ -1,512 +1,723 @@
+import asyncio
+import html
 import logging
 import os
 import threading
-import asyncio
-from typing import Literal, Any # Any را اضافه کردیم
+import uuid
+from datetime import datetime
 
-# --- کتابخانه‌های مورد نیاز ---
-from aiogram import Bot, Dispatcher, types
-from aiogram.filters.command import Command
-from aiogram.filters.callback_data import CallbackData
-from aiogram.fsm.storage.memory import MemoryStorage
+from aiogram import Bot, Dispatcher, F, types
+from aiogram.client.default import DefaultBotProperties
+from aiogram.enums import ParseMode
+from aiogram.filters import Command
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
-from aiogram.utils.keyboard import InlineKeyboardBuilder
-from aiogram.utils.markdown import hbold, hcode, hlink
-
-# برای اجرای محلی (اگر از فایل .env استفاده می‌کنید)
+from aiogram.fsm.storage.memory import MemoryStorage
 from dotenv import load_dotenv
+from flask import Flask
 
-# Flask برای زنده نگه داشتن برنامه در Render
-from flask import Flask, request
 
-# --- تنظیمات اولیه و لاگ‌گیری ---
-logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
-print("--- ربات در حال شروع است ---")
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s - %(levelname)s - %(message)s",
+)
 
 load_dotenv()
 
-# --- تنظیمات ربات ---
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 STAFF_GROUP_ID = os.getenv("STAFF_GROUP_ID")
-PORT = os.getenv("PORT", "10000") # مقدار پیش‌فرض 10000
+PORT = int(os.getenv("PORT", "10000"))
 
 if not BOT_TOKEN:
-    logging.error("خطا: BOT_TOKEN تنظیم نشده است. لطفاً در تنظیمات Render، متغیر محیطی BOT_TOKEN را با توکن ربات خود تنظیم کنید.")
-    exit(1)
+    raise RuntimeError("BOT_TOKEN is not set")
+
 if not STAFF_GROUP_ID:
-    logging.error("خطا: STAFF_GROUP_ID تنظیم نشده است. لطفاً در تنظیمات Render، متغیر محیطی STAFF_GROUP_ID را با شناسه گروه خود تنظیم کنید.")
-    exit(1)
+    raise RuntimeError("STAFF_GROUP_ID is not set")
+
 try:
     STAFF_GROUP_ID = int(STAFF_GROUP_ID)
 except ValueError:
-    logging.error(f"خطا: STAFF_GROUP_ID مقدار معتبر عددی ندارد: '{STAFF_GROUP_ID}'. لطفاً یک عدد صحیح وارد کنید.")
-    exit(1)
-try:
-    PORT = int(PORT)
-except ValueError:
-    logging.error(f"خطا: PORT مقدار معتبر عددی ندارد: '{PORT}'. لطفاً یک عدد صحیح وارد کنید.")
-    exit(1)
+    raise RuntimeError("STAFF_GROUP_ID must be a number")
 
-logging.info(f"تنظیمات محیطی خوانده شد: BOT_TOKEN=***, STAFF_GROUP_ID={STAFF_GROUP_ID}, PORT={PORT}")
 
-# --- راه‌اندازی ربات و دیسپچر با MemoryStorage ---
-storage = MemoryStorage()
-bot = Bot(token=BOT_TOKEN)
-dp = Dispatcher(storage=storage)
+bot = Bot(
+    token=BOT_TOKEN,
+    default=DefaultBotProperties(parse_mode=ParseMode.HTML),
+)
 
-# --- تعریف State ها ---
-class UserWorkflow(StatesGroup):
-    selecting_reason = State()
-    awaiting_reason_confirmation = State()
-    awaiting_shop_choice = State()
-    awaiting_rank_purchase = State()
-    awaiting_coin_purchase = State()
-    awaiting_custom_coin_amount = State()
+dp = Dispatcher(storage=MemoryStorage())
 
-# --- داده‌های نمونه ---
-REASONS = {
-    "reason_1": {"name": "مشکل ورود", "price": 10000},
-    "reason_2": {"name": "خطای پرداخت", "price": 15000},
-    "reason_3": {"name": "درخواست پشتیبانی", "price": 20000},
-}
-RANK_SHOP_ITEMS = {
-    "vip": {"name": "Vip", "price": 49000},
-    "elite": {"name": "Elite", "price": 100000},
-    "thefellomen": {"name": "TheFellOmen", "price": 190000},
-    "sponsor": {"name": "Sponsor", "price": 250000},
-    "lover": {"name": "Lover", "price": 400000},
-}
-COIN_SHOP_ITEMS = {
-    "50_coin": {"name": "50 Coin", "price": 15000},
-    "100_coin": {"name": "100 Coins", "price": 30000},
-    "150_coin": {"name": "150 Coins", "price": 55000},
-    "200_coin": {"name": "200 Coins", "price": 80000},
-    "250_coin": {"name": "250 Coins", "price": 150000},
-}
-PRICE_PER_COIN = 300
+app = Flask(__name__)
 
-# --- Callback Data Factories ---
-class WhitelistCallback(CallbackData, prefix="whitelist"):
-    action: Literal["select_reason", "confirm_reason", "cancel_reason"]
-    reason_id: str | None = None
 
-class ShopCallback(CallbackData, prefix="shop"):
-    action: Literal["open_rank_shop", "open_coin_shop", "buy_rank", "buy_coin", "custom_coin", "open_shop"]
-    item_id: str | None = None
-    amount: int | None = None
+# حافظه موقت تیکت‌ها
+# روی Render Free اگر سرویس ری‌استارت شود، این اطلاعات پاک می‌شود.
+TICKETS = {}
+STAFF_MESSAGE_TO_TICKET = {}
 
-# --- تصاویر نمونه ---
-PHOTO_PATHS = {
-    "whitelist_success": "photos/whitelist_success.jpg",
-    "rank_purchase_success": "photos/rank_purchase_success.jpg",
-    "coin_purchase_success": "photos/coin_purchase_success.jpg",
-}
 
-def get_photo_path(key: str) -> str | None:
-    path = PHOTO_PATHS.get(key)
-    if path and os.path.exists(path):
-        return path
-    return None
+class UserState(StatesGroup):
+    punishment_appeal = State()
+    whitelist = State()
+    contact_staff = State()
+    rank_shop_message = State()
+    coin_shop_message = State()
 
-async def send_message_with_photo(
-    message: types.Message | types.CallbackQuery,
-    text: str,
-    photo_key: str,
-    reply_markup: types.InlineKeyboardMarkup | None = None,
-    parse_mode: str = "Markdown"
-):
-    photo_path = get_photo_path(photo_key)
-    if isinstance(message, types.CallbackQuery):
-        message_obj = message.message
-    else:
-        message_obj = message
 
-    if photo_path:
-        try:
-            with open(photo_path, 'rb') as photo_file:
-                if isinstance(message, types.CallbackQuery):
-                     await message.message.answer_photo(photo=photo_file, caption=text, reply_markup=reply_markup, parse_mode=parse_mode)
-                else:
-                     await message.answer_photo(photo=photo_file, caption=text, reply_markup=reply_markup, parse_mode=parse_mode)
-            return True
-        except FileNotFoundError:
-            logging.warning(f"فایل عکس برای '{photo_key}' یافت نشد در مسیر: {photo_path}. ارسال پیام متنی.")
-            if isinstance(message, types.CallbackQuery):
-                await message.message.answer(text, reply_markup=reply_markup, parse_mode=parse_mode)
-            else:
-                await message.answer(text, reply_markup=reply_markup, parse_mode=parse_mode)
-            return False
-        except Exception as e:
-            logging.error(f"خطا در ارسال عکس {photo_key}: {e}")
-            if isinstance(message, types.CallbackQuery):
-                await message.message.answer(text, reply_markup=reply_markup, parse_mode=parse_mode)
-            else:
-                await message.answer(text, reply_markup=reply_markup, parse_mode=parse_mode)
-            return False
-    else:
-        if isinstance(message, types.CallbackQuery):
-            await message.message.answer(text, reply_markup=reply_markup, parse_mode=parse_mode)
-        else:
-            await message.answer(text, reply_markup=reply_markup, parse_mode=parse_mode)
-        return False
+class StaffState(StatesGroup):
+    replying = State()
 
-# --- پردازش دستور /start ---
-@dp.message(Command("start"))
-async def send_welcome(message: types.Message):
-    user_name = message.from_user.full_name
-    user_id = message.from_user.id
-    logging.info(f"دستور /start از کاربر {user_name} (ID: {user_id}) دریافت شد.")
-    await message.reply(f"سلام {hbold(user_name)}!\nبه ربات TheFellOmen خوش آمدید! برای مشاهده امکانات، از دستور /help استفاده کنید.")
 
-# --- پردازش دستور /help ---
-@dp.message(Command("help"))
-async def send_help(message: types.Message):
-    user_id = message.from_user.id
-    logging.info(f"دستور /help از کاربر {user_id} دریافت شد.")
-    help_text = (
-        "🤖 *راهنمای ربات TheFellOmen*\n\n"
-        f"{hbold('`/whitelist`')}: برای خرید دسترسی Whitelist یا رفع مشکلات خاص.\n"
-        f"{hbold('`/shop`')}: برای مشاهده فروشگاه رنک و کوین.\n"
-        f"{hbold('`/my_profile`')}: نمایش اطلاعات پروفایل شما (در آینده).\n\n"
-        "برای هرگونه سوال یا مشکل، لطفاً با ادمین در ارتباط باشید."
+def now_text() -> str:
+    return datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+
+
+def safe(value) -> str:
+    if value is None:
+        return "-"
+    return html.escape(str(value))
+
+
+def user_label(user: types.User) -> str:
+    username = f"@{user.username}" if user.username else user.full_name
+    return f"{safe(username)} | ID: <code>{user.id}</code>"
+
+
+def main_menu_keyboard() -> types.InlineKeyboardMarkup:
+    return types.InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                types.InlineKeyboardButton(
+                    text="Punishment Appeal",
+                    callback_data="menu:punishment",
+                )
+            ],
+            [
+                types.InlineKeyboardButton(
+                    text="Whitelist",
+                    callback_data="menu:whitelist",
+                )
+            ],
+            [
+                types.InlineKeyboardButton(
+                    text="Contact Staff",
+                    callback_data="menu:contact",
+                )
+            ],
+            [
+                types.InlineKeyboardButton(
+                    text="Shop",
+                    callback_data="menu:shop",
+                )
+            ],
+        ]
     )
-    await message.reply(help_text, parse_mode="Markdown")
 
-# --- پردازش دستور /whitelist ---
-@dp.message(Command("whitelist"))
-async def start_whitelist_process(message: types.Message, state: FSMContext):
-    user_id = message.from_user.id
-    logging.info(f"دستور /whitelist از کاربر {user_id} دریافت شد.")
-    await state.set_state(UserWorkflow.selecting_reason)
-    builder = InlineKeyboardBuilder()
-    for reason_id, reason_data in REASONS.items():
-        # ایجاد دکمه با استفاده از pack()
-        builder.add(types.InlineKeyboardButton(
-            text=f"{reason_data['name']} ({reason_data['price']:,} T)",
-            callback_data=WhitelistCallback(action="select_reason", reason_id=reason_id).pack()
-        ))
-    builder.adjust(1)
-    await message.reply("لطفاً یکی از دلایل زیر را برای Whitelist انتخاب کنید:", reply_markup=builder.as_markup())
 
-# --- پردازش کلیک روی دکمه انتخاب دلیل Whitelist ---
-# استفاده از filter با unpack()
-@dp.callback_query(WhitelistCallback.filter())
-async def process_whitelist_callback(callback_query: types.CallbackQuery, callback_data: WhitelistCallback, state: FSMContext):
-    user_id = callback_query.from_user.id
-    action = callback_data.action
+def shop_keyboard() -> types.InlineKeyboardMarkup:
+    return types.InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                types.InlineKeyboardButton(
+                    text="Rank Shop",
+                    callback_data="shop:rank",
+                )
+            ],
+            [
+                types.InlineKeyboardButton(
+                    text="Coin Shop",
+                    callback_data="shop:coin",
+                )
+            ],
+            [
+                types.InlineKeyboardButton(
+                    text="بازگشت",
+                    callback_data="menu:back",
+                )
+            ],
+        ]
+    )
 
-    if action == "select_reason":
-        reason_id = callback_data.reason_id
-        if not reason_id or reason_id not in REASONS:
-            await callback_query.answer("دلیل نامعتبر است.", show_alert=True)
-            return
-        reason_data = REASONS[reason_id]
-        reason_name = reason_data["name"]
-        reason_price = reason_data["price"]
-        await state.update_data(selected_reason_id=reason_id)
-        await state.set_state(UserWorkflow.awaiting_reason_confirmation)
-        builder = InlineKeyboardBuilder()
-        builder.add(types.InlineKeyboardButton(
-            text="✅ تایید نهایی",
-            callback_data=WhitelistCallback(action="confirm_reason", reason_id=reason_id).pack()
-        ))
-        builder.add(types.InlineKeyboardButton(
-            text="❌ لغو",
-            callback_data=WhitelistCallback(action="cancel_reason").pack()
-        ))
-        builder.adjust(2)
-        text = (
-            f"شما '{hbold(reason_name)}' را انتخاب کردید.\n"
-            f"هزینه: {hbold(f'{reason_price:,} تومان')}.\n\n"
-            "آیا برای تایید نهایی و انتقال به درگاه پرداخت آماده‌اید؟"
-        )
-        if callback_query.message:
-            await callback_query.message.edit_text(text, reply_markup=builder.as_markup(), parse_mode="Markdown")
-        await callback_query.answer("دلیل انتخاب شد.")
 
-    elif action == "confirm_reason":
-        reason_id = callback_data.reason_id
-        if not reason_id or reason_id not in REASONS:
-            await callback_query.answer("خطایی رخ داد، لطفاً دوباره امتحان کنید.", show_alert=True)
-            await state.clear()
-            return
-        reason_name = REASONS[reason_id]["name"]
-        reason_price = REASONS[reason_id]["price"]
-        logging.info(f"کاربر {user_id}، '{reason_name}' را با قیمت {reason_price} تایید کرد.")
-        # =====================================================
-        # === بخش پیاده‌سازی پرداخت ===
-        # =====================================================
-        text = f"پرداخت شما برای '{reason_name}' با موفقیت انجام شد!\n\n"
-        text += "اگر نیاز به کیت خاصی دارید، لطفاً با ادمین تماس بگیرید."
-        await send_message_with_photo(callback_query, text, "whitelist_success", parse_mode="Markdown")
-        await callback_query.answer("پرداخت موفق!")
-        await state.clear()
+def staff_ticket_keyboard(ticket_id: str) -> types.InlineKeyboardMarkup:
+    return types.InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                types.InlineKeyboardButton(
+                    text="Accept",
+                    callback_data=f"ticket:accept:{ticket_id}",
+                ),
+                types.InlineKeyboardButton(
+                    text="Deny",
+                    callback_data=f"ticket:deny:{ticket_id}",
+                ),
+            ],
+            [
+                types.InlineKeyboardButton(
+                    text="Reply",
+                    callback_data=f"ticket:reply:{ticket_id}",
+                )
+            ],
+        ]
+    )
 
-    elif action == "cancel_reason":
-        logging.info(f"فرآیند Whitelist توسط کاربر {user_id} لغو شد.")
-        if callback_query.message:
-            await callback_query.message.edit_text("عملیات Whitelist لغو شد.")
-        await callback_query.answer("عملیات لغو شد.")
-        await state.clear()
 
-# --- پردازش دستور /shop ---
-@dp.message(Command("shop"))
-async def open_main_shop(message: types.Message, state: FSMContext):
-    user_id = message.from_user.id
-    logging.info(f"دستور /shop از کاربر {user_id} دریافت شد.")
-    await state.set_state(UserWorkflow.awaiting_shop_choice)
-    builder = InlineKeyboardBuilder()
-    builder.add(types.InlineKeyboardButton(
-        text="🛒 فروشگاه رنک",
-        callback_data=ShopCallback(action="open_rank_shop").pack()
-    ))
-    builder.add(types.InlineKeyboardButton(
-        text="💰 فروشگاه کوین",
-        callback_data=ShopCallback(action="open_coin_shop").pack()
-    ))
-    builder.adjust(1)
-    await message.reply("به فروشگاه خوش آمدید! کدام بخش را می‌خواهید مشاهده کنید؟", reply_markup=builder.as_markup())
+def simple_staff_keyboard(ticket_id: str) -> types.InlineKeyboardMarkup:
+    return types.InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                types.InlineKeyboardButton(
+                    text="Accept",
+                    callback_data=f"ticket:accept:{ticket_id}",
+                ),
+                types.InlineKeyboardButton(
+                    text="Deny",
+                    callback_data=f"ticket:deny:{ticket_id}",
+                ),
+            ],
+            [
+                types.InlineKeyboardButton(
+                    text="Reply",
+                    callback_data=f"ticket:reply:{ticket_id}",
+                )
+            ],
+        ]
+    )
 
-# --- نمایش فروشگاه رنک ---
-@dp.callback_query(ShopCallback.filter())
-async def process_shop_callback(callback_query: types.CallbackQuery, callback_data: ShopCallback, state: FSMContext):
-    user_id = callback_query.from_user.id
-    action = callback_data.action
 
-    if action == "open_rank_shop":
-        logging.info(f"کاربر {user_id} فروشگاه رنک را باز کرد.")
-        await state.set_state(UserWorkflow.awaiting_rank_purchase)
-        message_text = f"🌟 {hbold('Rank Shop')} 🌟\n\n"
-        message_text += "برای خرید کیت رنک، رنک مورد نظر خود را انتخاب کنید:\n\n"
-        for item_id, item_data in RANK_SHOP_ITEMS.items():
-            message_text += f"🔹 {hbold(item_data['name'])} » {hcode(f'{item_data['price']:,} تومان')}\n"
-        message_text += "\nبرای خرید کیت رنک، پس از انتخاب رنک، لطفاً نام کیت مورد نظر (مثلاً: 'کیت') را در چت بنویسید."
-        builder = InlineKeyboardBuilder()
-        for item_id, item_data in RANK_SHOP_ITEMS.items():
-            builder.add(types.InlineKeyboardButton(
-                text=f"{item_data['name']} ({item_data['price']:,} T)",
-                callback_data=ShopCallback(action="buy_rank", item_id=item_id).pack()
-            ))
-        builder.adjust(1)
-        builder.add(types.InlineKeyboardButton(
-            text="بازگشت به منوی اصلی",
-            callback_data=ShopCallback(action="open_shop").pack()
-        ))
-        if callback_query.message:
-            await callback_query.message.edit_text(message_text, reply_markup=builder.as_markup(), parse_mode="Markdown")
-        await callback_query.answer("فروشگاه رنک")
+async def send_ticket_to_staff(
+    *,
+    ticket_type: str,
+    user: types.User,
+    text: str,
+    reply_markup: types.InlineKeyboardMarkup | None = None,
+) -> str:
+    ticket_id = uuid.uuid4().hex[:10]
 
-    elif action == "open_coin_shop":
-        logging.info(f"کاربر {user_id} فروشگاه کوین را باز کرد.")
-        await state.set_state(UserWorkflow.awaiting_coin_purchase)
-        message_text = f"💰 {hbold('Coin Shop')} 💰\n\n"
-        message_text += "مقدار کوین مورد نظر خود را انتخاب کنید:\n\n"
-        for item_id, item_data in COIN_SHOP_ITEMS.items():
-            message_text += f"🔹 {hbold(item_data['name'])} » {hcode(f'{item_data['price']:,} تومان')}\n"
-        message_text += f"\nاگر مقدار کوین مورد نظر شما بیشتر از این‌هاست، مقدار دلخواه خود را در چت بنویسید (هر کوین تقریباً {PRICE_PER_COIN:,} تومان)."
-        builder = InlineKeyboardBuilder()
-        for item_id, item_data in COIN_SHOP_ITEMS.items():
-            builder.add(types.InlineKeyboardButton(
-                text=f"{item_data['name']} ({item_data['price']:,} T)",
-                callback_data=ShopCallback(action="buy_coin", item_id=item_id).pack()
-            ))
-        builder.adjust(1)
-        builder.add(types.InlineKeyboardButton(
-            text="مقدار دلخواه",
-            callback_data=ShopCallback(action="custom_coin").pack()
-        ))
-        builder.add(types.InlineKeyboardButton(
-            text="بازگشت به منوی اصلی",
-            callback_data=ShopCallback(action="open_shop").pack()
-        ))
-        if callback_query.message:
-            await callback_query.message.edit_text(message_text, reply_markup=builder.as_markup(), parse_mode="Markdown")
-        await callback_query.answer("فروشگاه کوین")
+    TICKETS[ticket_id] = {
+        "id": ticket_id,
+        "type": ticket_type,
+        "user_id": user.id,
+        "user_name": user.full_name,
+        "username": user.username,
+        "created_at": now_text(),
+        "status": "open",
+    }
 
-    elif action == "buy_rank":
-        item_id = callback_data.item_id
-        if not item_id or item_id not in RANK_SHOP_ITEMS:
-            await callback_query.answer("آیتم نامعتبر است.", show_alert=True)
-            return
-        item_data = RANK_SHOP_ITEMS[item_id]
-        item_name = item_data["name"]
-        item_price = item_data["price"]
-        logging.info(f"کاربر {user_id} قصد خرید رنک '{item_name}' را دارد.")
-        await state.update_data(selected_rank_item_id=item_id)
-        await state.set_state(UserWorkflow.awaiting_rank_purchase)
-        message_text = f"شما '{hbold(item_name)}' را انتخاب کردید.\n"
-        message_text += f"هزینه: {hcode(f'{item_price:,} تومان')}.\n\n"
-        message_text += "لطفاً نام کیت مورد نظر خود را وارد کنید (مثلاً: 'کیت' یا 'Kit')."
-        builder = InlineKeyboardBuilder()
-        builder.add(types.InlineKeyboardButton(text="لغو", callback_data=ShopCallback(action="open_rank_shop").pack()))
-        if callback_query.message:
-            await callback_query.message.edit_text(message_text, reply_markup=builder.as_markup(), parse_mode="Markdown")
-        await callback_query.answer("تایید انتخاب رنک")
+    sent = await bot.send_message(
+        chat_id=STAFF_GROUP_ID,
+        text=text,
+        reply_markup=reply_markup,
+    )
 
-    elif action == "buy_coin":
-        item_id = callback_data.item_id
-        if not item_id or item_id not in COIN_SHOP_ITEMS:
-            await callback_query.answer("بسته کوین نامعتبر است.", show_alert=True)
-            return
-        item_data = COIN_SHOP_ITEMS[item_id]
-        item_name = item_data["name"]
-        item_price = item_data["price"]
-        try:
-            coins_amount = int(item_id.split('_')[0])
-        except ValueError:
-            logging.error(f"فرمت item_id برای کوین نامعتبر است: {item_id}")
-            await callback_query.answer("خطایی در پردازش بسته کوین رخ داد.", show_alert=True)
-            await state.clear()
-            return
-        logging.info(f"کاربر {user_id} قصد خرید {item_name} ({coins_amount} کوین) را دارد.")
-        # =====================================================
-        # === بخش پیاده‌سازی پرداخت برای کوین ===
-        # =====================================================
-        confirmation_message = f"خرید {hbold(item_name)} با موفقیت انجام شد!\n"
-        confirmation_message += f"{hbold(f'{coins_amount} کوین')} به حساب شما اضافه خواهد شد."
-        await send_message_with_photo(callback_query, confirmation_message, "coin_purchase_success", parse_mode="Markdown")
-        await callback_query.answer("خرید کوین موفق!")
-        await state.clear()
+    TICKETS[ticket_id]["staff_message_id"] = sent.message_id
+    STAFF_MESSAGE_TO_TICKET[sent.message_id] = ticket_id
 
-    elif action == "custom_coin":
-        logging.info(f"کاربر {user_id} درخواست مقدار دلخواه کوین را داد.")
-        await state.set_state(UserWorkflow.awaiting_custom_coin_amount)
-        message_text = "لطفاً مقدار کوین مورد نظر خود را به عدد وارد کنید.\n"
-        message_text += f"(هر کوین تقریباً {PRICE_PER_COIN:,} تومان محاسبه می‌شود.)"
-        builder = InlineKeyboardBuilder()
-        builder.add(types.InlineKeyboardButton(text="لغو", callback_data=ShopCallback(action="open_coin_shop").pack()))
-        if callback_query.message:
-            await callback_query.message.edit_text(message_text, reply_markup=builder.as_markup(), parse_mode="Markdown")
-        await callback_query.answer("وارد کردن مقدار دلخواه")
+    return ticket_id
 
-    elif action == "open_shop":
-        logging.info(f"کاربر {user_id} به منوی اصلی فروشگاه بازگشت.")
-        await state.set_state(UserWorkflow.awaiting_shop_choice)
-        builder = InlineKeyboardBuilder()
-        builder.add(types.InlineKeyboardButton(
-            text="🛒 فروشگاه رنک",
-            callback_data=ShopCallback(action="open_rank_shop").pack()
-        ))
-        builder.add(types.InlineKeyboardButton(
-            text="💰 فروشگاه کوین",
-            callback_data=ShopCallback(action="open_coin_shop").pack()
-        ))
-        builder.adjust(1)
-        if callback_query.message:
-            await callback_query.message.edit_text("به منوی اصلی فروشگاه خوش آمدید! کدام بخش را می‌خواهید مشاهده کنید؟", reply_markup=builder.as_markup())
-        await callback_query.answer("منوی اصلی فروشگاه")
 
-# پردازش دریافت نام کیت پس از انتخاب رنک
-@dp.message(UserWorkflow.awaiting_rank_purchase)
-async def process_rank_kit_name(message: types.Message, state: FSMContext):
-    user_id = message.from_user.id
-    selected_rank_item_id = (await state.get_data()).get("selected_rank_item_id")
-    kit_name = message.text # نام کیت وارد شده توسط کاربر
+@dp.message(Command("start"))
+async def start_command(message: types.Message, state: FSMContext):
+    await state.clear()
 
-    if not selected_rank_item_id or selected_rank_item_id not in RANK_SHOP_ITEMS:
-        await message.reply("خطایی در انتخاب رنک رخ داد. لطفاً دوباره /shop را بزنید.")
-        await state.clear()
-        return
+    text = (
+        "سلام، به ربات TheFellOmen خوش آمدید.\n\n"
+        "لطفاً یکی از بخش‌های زیر را انتخاب کنید:"
+    )
 
-    item_data = RANK_SHOP_ITEMS[selected_rank_item_id]
-    item_name = item_data["name"]
-    item_price = item_data["price"]
-    logging.info(f"کاربر {user_id} برای رنک '{item_name}' کیت '{kit_name}' را انتخاب کرد.")
+    await message.answer(text, reply_markup=main_menu_keyboard())
 
-    # =====================================================
-    # === بخش پیاده‌سازی پرداخت برای رنک ===
-    # =====================================================
-    confirmation_message = f"خرید رنک '{hbold(item_name)}' با کیت '{hbold(kit_name)}' با موفقیت انجام شد!\n"
-    confirmation_message += f"هزینه: {hcode(f'{item_price:,} تومان')}.\n\n"
-    confirmation_message += "شما به زودی دسترسی خود را دریافت خواهید کرد."
-    await send_message_with_photo(message, confirmation_message, "rank_purchase_success", parse_mode="Markdown")
-    await message.reply("خرید شما ثبت شد!")
+
+@dp.message(Command("help"))
+async def help_command(message: types.Message):
+    text = (
+        "راهنمای ربات:\n\n"
+        "از دستور /start استفاده کنید و یکی از بخش‌ها را انتخاب کنید:\n\n"
+        "Punishment Appeal - درخواست آن‌بن یا آن‌میوت\n"
+        "Whitelist - درخواست وایت‌لیست شدن در سرور\n"
+        "Contact Staff - ارتباط با استف و ساخت تیکت پشتیبانی\n"
+        "Shop - فروشگاه رنک و کوین"
+    )
+
+    await message.answer(text)
+
+
+@dp.callback_query(F.data == "menu:back")
+async def back_to_menu(callback: types.CallbackQuery, state: FSMContext):
+    await state.clear()
+
+    await callback.message.edit_text(
+        "لطفاً یکی از بخش‌های زیر را انتخاب کنید:",
+        reply_markup=main_menu_keyboard(),
+    )
+    await callback.answer()
+
+
+@dp.callback_query(F.data == "menu:punishment")
+async def open_punishment_appeal(callback: types.CallbackQuery, state: FSMContext):
+    await state.set_state(UserState.punishment_appeal)
+
+    text = (
+        "لطفاً دلیل پانیشمنت، پانیشمنت آیدی و یوزر گیم خودتون رو بنویسید.\n\n"
+        "فرمت پیشنهادی:\n"
+        "<code>Username: Steve\n"
+        "Punishment ID: 12345\n"
+        "Reason: درخواست آن‌بن\n"
+        "Message: توضیحات کامل شما</code>"
+    )
+
+    await callback.message.edit_text(text)
+    await callback.answer()
+
+
+@dp.message(UserState.punishment_appeal)
+async def receive_punishment_appeal(message: types.Message, state: FSMContext):
+    raw_text = message.text or ""
+
+    username = "-"
+    punishment_id = "-"
+    reason = "-"
+    user_message = raw_text
+
+    for line in raw_text.splitlines():
+        lower = line.lower().strip()
+
+        if lower.startswith("username:"):
+            username = line.split(":", 1)[1].strip()
+        elif lower.startswith("punishment id:"):
+            punishment_id = line.split(":", 1)[1].strip()
+        elif lower.startswith("punishment_id:"):
+            punishment_id = line.split(":", 1)[1].strip()
+        elif lower.startswith("id:"):
+            punishment_id = line.split(":", 1)[1].strip()
+        elif lower.startswith("reason:"):
+            reason = line.split(":", 1)[1].strip()
+        elif lower.startswith("message:"):
+            user_message = line.split(":", 1)[1].strip()
+
+    staff_text = (
+        "Punishment Appeal\n"
+        f"Username: {safe(username)}\n"
+        f"Reason: {safe(reason)}\n"
+        f"Message: {safe(user_message)}\n"
+        f"Time: {safe(now_text())}\n"
+        f"Punishment id: {safe(punishment_id)}"
+    )
+
+    ticket_id = uuid.uuid4().hex[:10]
+
+    TICKETS[ticket_id] = {
+        "id": ticket_id,
+        "type": "Punishment Appeal",
+        "user_id": message.from_user.id,
+        "user_name": message.from_user.full_name,
+        "username": message.from_user.username,
+        "created_at": now_text(),
+        "status": "open",
+    }
+
+    sent = await bot.send_message(
+        chat_id=STAFF_GROUP_ID,
+        text=staff_text,
+        reply_markup=staff_ticket_keyboard(ticket_id),
+    )
+
+    TICKETS[ticket_id]["staff_message_id"] = sent.message_id
+    STAFF_MESSAGE_TO_TICKET[sent.message_id] = ticket_id
+
+    await message.answer(
+        "درخواست Punishment Appeal شما برای استف ارسال شد.\n"
+        "لطفاً منتظر پاسخ بمانید."
+    )
+
     await state.clear()
 
 
-# --- پردازش مقدار دلخواه کوین وارد شده توسط کاربر ---
-@dp.message(UserWorkflow.awaiting_custom_coin_amount)
-async def process_custom_coin_amount(message: types.Message, state: FSMContext):
-    user_id = message.from_user.id
-    try:
-        amount = int(message.text)
-        if amount <= 0:
-            await message.reply("مقدار کوین باید بیشتر از صفر باشد.")
-            return
-        total_price = amount * PRICE_PER_COIN
-        logging.info(f"کاربر {user_id} درخواست {amount} کوین با قیمت تخمینی {total_price} را داد.")
-        # =====================================================
-        # === بخش پیاده‌سازی پرداخت برای کوین دلخواه ===
-        # =====================================================
-        admin_message_text = (
-            f"کاربر {hbold(message.from_user.full_name)} (ID: {user_id}) درخواست خرید {hbold(f'{amount} کوین')} را دارد.\n"
-            f"هزینه تقریبی: {hcode(f'{total_price:,} تومان')}.\n\n"
-            "لطفاً برای هماهنگی و دریافت لینک پرداخت، با ایشان در ارتباط باشید."
+@dp.callback_query(F.data == "menu:whitelist")
+async def open_whitelist(callback: types.CallbackQuery, state: FSMContext):
+    await state.set_state(UserState.whitelist)
+
+    text = "لطفاً یوزری که می‌خواهید وایت‌لیست شود را در چت بنویسید."
+
+    await callback.message.edit_text(text)
+    await callback.answer()
+
+
+@dp.message(UserState.whitelist)
+async def receive_whitelist(message: types.Message, state: FSMContext):
+    whitelist_username = message.text.strip() if message.text else "-"
+
+    ticket_id = uuid.uuid4().hex[:10]
+
+    staff_text = (
+        "Whitelist\n"
+        f"Username: {safe(whitelist_username)}\n"
+        f"Time: {safe(now_text())}\n"
+        f"Messages: {safe(message.text)}"
+    )
+
+    TICKETS[ticket_id] = {
+        "id": ticket_id,
+        "type": "Whitelist",
+        "user_id": message.from_user.id,
+        "user_name": message.from_user.full_name,
+        "username": message.from_user.username,
+        "created_at": now_text(),
+        "status": "open",
+    }
+
+    sent = await bot.send_message(
+        chat_id=STAFF_GROUP_ID,
+        text=staff_text,
+        reply_markup=simple_staff_keyboard(ticket_id),
+    )
+
+    TICKETS[ticket_id]["staff_message_id"] = sent.message_id
+    STAFF_MESSAGE_TO_TICKET[sent.message_id] = ticket_id
+
+    await message.answer(
+        "درخواست وایت‌لیست شما برای استف ارسال شد.\n"
+        "لطفاً منتظر بررسی بمانید."
+    )
+
+    await state.clear()
+
+
+@dp.callback_query(F.data == "menu:contact")
+async def open_contact_staff(callback: types.CallbackQuery, state: FSMContext):
+    await state.set_state(UserState.contact_staff)
+
+    text = (
+        "لطفاً دلیل ارتباط با استف و پیام خودتون رو بنویسید.\n\n"
+        "فرمت پیشنهادی:\n"
+        "<code>Reason: مشکل خرید\n"
+        "Message: توضیحات کامل شما</code>"
+    )
+
+    await callback.message.edit_text(text)
+    await callback.answer()
+
+
+@dp.message(UserState.contact_staff)
+async def receive_contact_staff(message: types.Message, state: FSMContext):
+    raw_text = message.text or ""
+
+    reason = "-"
+    user_message = raw_text
+
+    for line in raw_text.splitlines():
+        lower = line.lower().strip()
+
+        if lower.startswith("reason:"):
+            reason = line.split(":", 1)[1].strip()
+        elif lower.startswith("message:"):
+            user_message = line.split(":", 1)[1].strip()
+
+    ticket_id = uuid.uuid4().hex[:10]
+
+    staff_text = (
+        "Contact Staff\n"
+        f"Username: {user_label(message.from_user)}\n"
+        f"Reason: {safe(reason)}\n"
+        f"Time: {safe(now_text())}\n"
+        f"Messages: {safe(user_message)}"
+    )
+
+    TICKETS[ticket_id] = {
+        "id": ticket_id,
+        "type": "Contact Staff",
+        "user_id": message.from_user.id,
+        "user_name": message.from_user.full_name,
+        "username": message.from_user.username,
+        "created_at": now_text(),
+        "status": "open",
+    }
+
+    sent = await bot.send_message(
+        chat_id=STAFF_GROUP_ID,
+        text=staff_text,
+        reply_markup=staff_ticket_keyboard(ticket_id),
+    )
+
+    TICKETS[ticket_id]["staff_message_id"] = sent.message_id
+    STAFF_MESSAGE_TO_TICKET[sent.message_id] = ticket_id
+
+    await message.answer(
+        "تیکت پشتیبانی شما برای استف ارسال شد.\n"
+        "لطفاً منتظر پاسخ بمانید."
+    )
+
+    await state.clear()
+
+
+@dp.callback_query(F.data == "menu:shop")
+async def open_shop(callback: types.CallbackQuery, state: FSMContext):
+    await state.clear()
+
+    text = (
+        "رنک‌ها و کوین‌ها در سرور\n\n"
+        "لطفاً یکی از بخش‌های فروشگاه را انتخاب کنید:"
+    )
+
+    await callback.message.edit_text(text, reply_markup=shop_keyboard())
+    await callback.answer()
+
+
+@dp.callback_query(F.data == "shop:rank")
+async def open_rank_shop(callback: types.CallbackQuery, state: FSMContext):
+    await state.set_state(UserState.rank_shop_message)
+
+    text = (
+        "Rank Shop\n\n"
+        "Vip » 49,000 Toman\n"
+        "Elite » 100,000 Toman\n"
+        "TheFellOmen » 190,000 Toman\n"
+        "Sponsor » 250,000 Toman\n"
+        "Lover » 400,000 Toman\n\n"
+        "اگر فقط نیاز به کیت رنک دارید، رنک مورد نظر و کیتی که می‌خواهید را بنویسید.\n"
+        "مثلاً:\n"
+        "<code>کیت رنک الایت</code>"
+    )
+
+    await callback.message.edit_text(text)
+    await callback.answer()
+
+
+@dp.message(UserState.rank_shop_message)
+async def receive_rank_shop_message(message: types.Message, state: FSMContext):
+    ticket_id = uuid.uuid4().hex[:10]
+
+    staff_text = (
+        "Shop - Rank\n"
+        f"Username: {user_label(message.from_user)}\n"
+        f"Time: {safe(now_text())}\n"
+        f"Messages: {safe(message.text)}"
+    )
+
+    TICKETS[ticket_id] = {
+        "id": ticket_id,
+        "type": "Shop - Rank",
+        "user_id": message.from_user.id,
+        "user_name": message.from_user.full_name,
+        "username": message.from_user.username,
+        "created_at": now_text(),
+        "status": "open",
+    }
+
+    sent = await bot.send_message(
+        chat_id=STAFF_GROUP_ID,
+        text=staff_text,
+        reply_markup=staff_ticket_keyboard(ticket_id),
+    )
+
+    TICKETS[ticket_id]["staff_message_id"] = sent.message_id
+    STAFF_MESSAGE_TO_TICKET[sent.message_id] = ticket_id
+
+    await message.answer(
+        "درخواست رنک/کیت شما برای استف ارسال شد.\n"
+        "لطفاً منتظر پاسخ بمانید."
+    )
+
+    await state.clear()
+
+
+@dp.callback_query(F.data == "shop:coin")
+async def open_coin_shop(callback: types.CallbackQuery, state: FSMContext):
+    await state.set_state(UserState.coin_shop_message)
+
+    text = (
+        "Coin Shop\n\n"
+        "50 Coin » 15,000 Toman\n"
+        "100 Coins » 30,000 Toman\n"
+        "150 Coins » 55,000 Toman\n"
+        "200 Coins » 80,000 Toman\n"
+        "250 Coins » 150,000 Toman\n\n"
+        "اگر مقدار کوینی که می‌خواهید بیشتر از این‌هاست، مقدار مورد نظر خودتون رو تو چت بنویسید."
+    )
+
+    await callback.message.edit_text(text)
+    await callback.answer()
+
+
+@dp.message(UserState.coin_shop_message)
+async def receive_coin_shop_message(message: types.Message, state: FSMContext):
+    ticket_id = uuid.uuid4().hex[:10]
+
+    staff_text = (
+        "Shop - Coin\n"
+        f"Username: {user_label(message.from_user)}\n"
+        f"Time: {safe(now_text())}\n"
+        f"Messages: {safe(message.text)}"
+    )
+
+    TICKETS[ticket_id] = {
+        "id": ticket_id,
+        "type": "Shop - Coin",
+        "user_id": message.from_user.id,
+        "user_name": message.from_user.full_name,
+        "username": message.from_user.username,
+        "created_at": now_text(),
+        "status": "open",
+    }
+
+    sent = await bot.send_message(
+        chat_id=STAFF_GROUP_ID,
+        text=staff_text,
+        reply_markup=staff_ticket_keyboard(ticket_id),
+    )
+
+    TICKETS[ticket_id]["staff_message_id"] = sent.message_id
+    STAFF_MESSAGE_TO_TICKET[sent.message_id] = ticket_id
+
+    await message.answer(
+        "درخواست کوین شما برای استف ارسال شد.\n"
+        "لطفاً منتظر پاسخ بمانید."
+    )
+
+    await state.clear()
+
+
+@dp.callback_query(F.data.startswith("ticket:"))
+async def handle_ticket_buttons(callback: types.CallbackQuery, state: FSMContext):
+    parts = callback.data.split(":")
+
+    if len(parts) != 3:
+        await callback.answer("داده نامعتبر است.", show_alert=True)
+        return
+
+    _, action, ticket_id = parts
+
+    ticket = TICKETS.get(ticket_id)
+
+    if not ticket:
+        await callback.answer("این تیکت پیدا نشد یا ربات ری‌استارت شده است.", show_alert=True)
+        return
+
+    player_id = ticket["user_id"]
+
+    if action == "accept":
+        ticket["status"] = "accepted"
+
+        await bot.send_message(
+            chat_id=player_id,
+            text=(
+                "درخواست شما توسط استف تایید شد.\n"
+                "لطفاً منتظر ادامه روند باشید."
+            ),
         )
-        await bot.send_message(STAFF_GROUP_ID, admin_message_text, parse_mode="Markdown")
 
-        final_message = f"شما درخواست {hbold(f'{amount} کوین')} را دارید.\n"
-        final_message += f"هزینه تقریبی: {hcode(f'{total_price:,} تومان')}.\n\n"
-        final_message += "لطفاً منتظر پیام ادمین برای هماهنگی و دریافت لینک پرداخت باشید."
-        await message.reply(final_message, parse_mode="Markdown")
-    except ValueError:
-        await message.reply("مقدار وارد شده معتبر نیست. لطفاً فقط عدد وارد کنید.")
-    except Exception as e:
-        logging.error(f"خطا در پردازش کوین دلخواه: {e}")
-        await message.reply("خطایی در پردازش درخواست شما رخ داد.")
-    finally:
+        await callback.answer("تیکت تایید شد.")
+        await callback.message.reply("Accepted")
+
+    elif action == "deny":
+        ticket["status"] = "denied"
+
+        await bot.send_message(
+            chat_id=player_id,
+            text=(
+                "درخواست شما توسط استف رد شد.\n"
+                "برای اطلاعات بیشتر می‌توانید دوباره تیکت ارسال کنید."
+            ),
+        )
+
+        await callback.answer("تیکت رد شد.")
+        await callback.message.reply("Denied")
+
+    elif action == "reply":
+        await state.set_state(StaffState.replying)
+        await state.update_data(ticket_id=ticket_id)
+
+        await callback.answer("پیام پاسخ را در همین گروه ارسال کنید.")
+        await callback.message.reply(
+            "لطفاً پاسخ خود را برای پلیر ارسال کنید.\n"
+            "پیام بعدی شما برای پلیر فرستاده می‌شود."
+        )
+
+    else:
+        await callback.answer("عملیات نامعتبر است.", show_alert=True)
+
+
+@dp.message(StaffState.replying, F.chat.id == STAFF_GROUP_ID)
+async def staff_reply_by_button(message: types.Message, state: FSMContext):
+    data = await state.get_data()
+    ticket_id = data.get("ticket_id")
+
+    ticket = TICKETS.get(ticket_id)
+
+    if not ticket:
+        await message.reply("تیکت پیدا نشد یا ربات ری‌استارت شده است.")
         await state.clear()
+        return
 
-# --- وب‌سرور Flask برای Keep-Alive در Render ---
-app = Flask(__name__)
+    player_id = ticket["user_id"]
+    reply_text = message.text or message.caption
 
-@app.route('/')
-async def homepage():
-    return "ربات TheFellOmen در حال اجراست!"
+    if not reply_text:
+        await message.reply("فقط پیام متنی قابل ارسال است.")
+        return
 
-# اگر از webhook استفاده می‌کنید، این بخش را فعال کنید
-# @app.route('/webhook', methods=['POST'])
-# async def webhook():
-#     update = types.Update.model_validate(request.json) # برای aiogram v3+
-#     await dp.feed_update(bot, update)
-#     return "OK", 200
+    await bot.send_message(
+        chat_id=player_id,
+        text=(
+            "پاسخ استف:\n\n"
+            f"{safe(reply_text)}"
+        ),
+    )
 
-def run_flask_server():
-    try:
-        # Render پورت را از متغیر محیطی PORT تعیین می‌کند
-        app.run(host="0.0.0.0", port=PORT, debug=False)
-    except Exception as e:
-        logging.error(f"خطا در اجرای وب‌سرور Flask: {e}")
+    await message.reply("پاسخ برای پلیر ارسال شد.")
+    await state.clear()
 
-# --- تابع اصلی برای اجرای ربات و وب‌سرور ---
+
+@dp.message(F.chat.id == STAFF_GROUP_ID)
+async def staff_direct_reply(message: types.Message):
+    if not message.reply_to_message:
+        return
+
+    ticket_id = STAFF_MESSAGE_TO_TICKET.get(message.reply_to_message.message_id)
+
+    if not ticket_id:
+        return
+
+    ticket = TICKETS.get(ticket_id)
+
+    if not ticket:
+        await message.reply("تیکت پیدا نشد یا ربات ری‌استارت شده است.")
+        return
+
+    reply_text = message.text or message.caption
+
+    if not reply_text:
+        await message.reply("فقط پیام متنی قابل ارسال است.")
+        return
+
+    await bot.send_message(
+        chat_id=ticket["user_id"],
+        text=(
+            "پاسخ استف:\n\n"
+            f"{safe(reply_text)}"
+        ),
+    )
+
+    await message.reply("پاسخ برای پلیر ارسال شد.")
+
+
+@app.route("/")
+def home():
+    return "TheFellOmen Bot is running!"
+
+
+def run_flask():
+    app.run(host="0.0.0.0", port=PORT)
+
+
 async def main():
-    logging.info("شروع اجرای تابع main...")
-
-    # اجرای Flask در یک ترد جداگانه
-    flask_thread = threading.Thread(target=run_flask_server)
-    flask_thread.daemon = True
+    logging.info("Starting Flask server thread...")
+    flask_thread = threading.Thread(target=run_flask, daemon=True)
     flask_thread.start()
-    logging.info("ترد وب‌سرور Flask راه‌اندازی شد.")
 
-    # شروع پولینگ Aiogram
-    logging.info("شروع پولینگ Aiogram...")
-    try:
-        await dp.start_polling(bot, skip_updates=True)
-    except Exception as e:
-        logging.error(f"خطا در هنگام اجرای پولینگ Aiogram: {e}")
-    finally:
-        logging.info("پولینگ Aiogram متوقف شد.")
+    logging.info("Starting bot polling...")
+    await dp.start_polling(bot, skip_updates=True)
 
-# --- اجرای برنامه ---
+
 if __name__ == "__main__":
-    print("اجرای اسکریپت اصلی...")
-    try:
-        # استفاده از asyncio.run() برای اجرای تابع async main
-        asyncio.run(main())
-    except KeyboardInterrupt:
-        logging.info("ربات با KeyboardInterrupt متوقف شد.")
-    except Exception as e:
-        logging.critical(f"خطای بحرانی در اجرای اصلی: {e}")
-    finally:
-        print("--- ربات متوقف شد ---")
+    asyncio.run(main())
