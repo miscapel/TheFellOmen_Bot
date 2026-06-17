@@ -1,35 +1,26 @@
 import asyncio
 import os
-import logging
+import json
 import random
 import string
-import json
-import html
-import threading
 from datetime import datetime
-from flask import Flask
-
 from aiogram import Bot, Dispatcher, types, F
 from aiogram.enums import ParseMode
 from aiogram.filters import Command
 from aiogram.client.default import DefaultBotProperties
-from aiogram.fsm.state import State, StatesGroup
 from aiogram.fsm.context import FSMContext
+from aiogram.fsm.state import State, StatesGroup
 from aiogram.fsm.storage.memory import MemoryStorage
-
 
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 
-STAFF_GROUP_ID = -1004332150226
+STAFF_GROUP_ID = -100XXXXXXXXX
 
-# استیکرها (می‌توانی FileID خودت را جایگزین کنی)
-WELCOME_STICKER = "CAACAgIAAxkBAAEB123lDummyWelcomeSticker"
-TICKET_STICKER = "CAACAgIAAxkBAAEB123lDummyTicketSticker"
-SHOP_STICKER = "CAACAgIAAxkBAAEB123lDummyShopSticker"
+WELCOME_STICKER = "WELCOME_STICKER_ID"
+TICKET_STICKER = "TICKET_STICKER_ID"
+SHOP_STICKER = "SHOP_STICKER_ID"
 
 USERS_FILE = "users.json"
-
-logging.basicConfig(level=logging.INFO)
 
 bot = Bot(
     token=BOT_TOKEN,
@@ -38,115 +29,34 @@ bot = Bot(
 
 dp = Dispatcher(storage=MemoryStorage())
 
-
-# ---------- KEEP ALIVE ----------
-
-app = Flask(__name__)
-
-@app.route("/")
-def home():
-    return "Bot Running"
-
-def run():
-    port = int(os.environ.get("PORT",10000))
-    app.run(host="0.0.0.0",port=port)
-
-def keep_alive():
-    threading.Thread(target=run).start()
-
-
-# ---------- DATA ----------
-
 TICKETS = {}
-REPLY_MODE = {}
-TRANSCRIPTS = {}
 USERS = set()
 
 
-# ---------- USERS ----------
+# ---------------- USERS ----------------
 
 def load_users():
-
     global USERS
-
     if os.path.exists(USERS_FILE):
-
         with open(USERS_FILE,"r") as f:
-
             USERS = set(json.load(f))
 
 
 def save_users():
-
     with open(USERS_FILE,"w") as f:
-
         json.dump(list(USERS),f)
 
 
 def add_user(uid):
-
     USERS.add(uid)
-
     save_users()
 
 
-# ---------- HELPERS ----------
+# ---------------- TOOLS ----------------
 
-def make_ticket():
-
+def ticket_id():
     return "TK-" + "".join(random.choices(string.ascii_uppercase + string.digits,k=6))
 
-
-def now():
-
-    return datetime.now().strftime("%Y-%m-%d %H:%M")
-
-
-def create_transcript(ticket):
-
-    if ticket not in TRANSCRIPTS:
-
-        return None
-
-    msgs = TRANSCRIPTS[ticket]
-
-    content = """
-<html>
-<head>
-<meta charset="UTF-8">
-<style>
-body{background:#1e1e1e;color:white;font-family:Arial;padding:20px}
-.msg{background:#2b2b2b;margin:10px;padding:10px;border-radius:6px}
-.author{color:#7fb3ff}
-.time{font-size:12px;color:gray}
-</style>
-</head>
-<body>
-<h2>Ticket Transcript</h2>
-"""
-
-    for m in msgs:
-
-        content += f"""
-<div class="msg">
-<div class="author">{html.escape(m['author'])}</div>
-<div>{html.escape(m['text'])}</div>
-<div class="time">{m['time']}</div>
-</div>
-"""
-
-    content += "</body></html>"
-
-    name = f"transcript_{ticket}.html"
-
-    with open(name,"w",encoding="utf-8") as f:
-
-        f.write(content)
-
-    return name
-
-
-# ---------- MENUS ----------
 
 def main_menu():
 
@@ -154,18 +64,17 @@ def main_menu():
 
         keyboard=[
 
-            [types.KeyboardButton(text="اعتراض به بن")],
+            [types.KeyboardButton(text="Punishment Appeal")],
 
-            [types.KeyboardButton(text="درخواست وایت لیست")],
+            [types.KeyboardButton(text="Whitelist Request")],
 
-            [types.KeyboardButton(text="تماس با استاف")],
+            [types.KeyboardButton(text="Contact Staff")],
 
-            [types.KeyboardButton(text="فروشگاه سرور")]
+            [types.KeyboardButton(text="Shop")]
 
         ],
 
         resize_keyboard=True
-
     )
 
 
@@ -175,9 +84,9 @@ def shop_menu():
 
         inline_keyboard=[
 
-            [types.InlineKeyboardButton(text="خرید رنک",callback_data="rank")],
+            [types.InlineKeyboardButton(text="Rank",callback_data="rank")],
 
-            [types.InlineKeyboardButton(text="خرید کوین",callback_data="coin")]
+            [types.InlineKeyboardButton(text="Coin",callback_data="coin")]
 
         ]
 
@@ -192,15 +101,15 @@ def staff_buttons(ticket):
 
             [
 
-                types.InlineKeyboardButton(text="تایید",callback_data=f"accept:{ticket}"),
+                types.InlineKeyboardButton(text="Accept",callback_data=f"accept:{ticket}"),
 
-                types.InlineKeyboardButton(text="رد",callback_data=f"deny:{ticket}")
+                types.InlineKeyboardButton(text="Deny",callback_data=f"deny:{ticket}")
 
             ],
 
             [
 
-                types.InlineKeyboardButton(text="پاسخ",callback_data=f"reply:{ticket}")
+                types.InlineKeyboardButton(text="Reply",callback_data=f"reply:{ticket}")
 
             ]
 
@@ -209,7 +118,7 @@ def staff_buttons(ticket):
     )
 
 
-# ---------- STATES ----------
+# ---------------- STATES ----------------
 
 class Punish(StatesGroup):
 
@@ -227,7 +136,7 @@ class Whitelist(StatesGroup):
 
 class Contact(StatesGroup):
 
-    reason = State()
+    subject = State()
     message = State()
 
 
@@ -237,7 +146,7 @@ class Shop(StatesGroup):
     message = State()
 
 
-# ---------- START ----------
+# ---------------- START ----------------
 
 @dp.message(Command("start"))
 async def start(message: types.Message):
@@ -255,9 +164,9 @@ async def start(message: types.Message):
     await message.answer(text,reply_markup=main_menu())
 
 
-# ---------- PUNISH ----------
+# ---------------- PUNISHMENT ----------------
 
-@dp.message(F.text=="اعتراض به بن")
+@dp.message(F.text=="Punishment Appeal")
 async def punish_start(message: types.Message,state:FSMContext):
 
     await state.set_state(Punish.username)
@@ -300,20 +209,20 @@ async def punish_finish(message: types.Message,state:FSMContext):
 
     data = await state.get_data()
 
-    ticket = make_ticket()
+    ticket = ticket_id()
 
     TICKETS[ticket]={"user":message.from_user.id}
-
-    TRANSCRIPTS[ticket]=[]
 
     await bot.send_sticker(message.chat.id,TICKET_STICKER)
 
     text=f"""
-اعتراض به بن
+Punishment Appeal
 
 Minecraft: {data['username']}
 Punishment ID: {data['pid']}
-Reason: {data['reason']}
+
+Reason:
+{data['reason']}
 
 Message:
 {message.text}
@@ -326,14 +235,14 @@ Ticket: {ticket}
 
     await bot.send_message(STAFF_GROUP_ID,text,reply_markup=staff_buttons(ticket))
 
-    await message.answer("درخواست شما ارسال شد",reply_markup=main_menu())
+    await message.answer("درخواست شما برای استاف ارسال شد",reply_markup=main_menu())
 
     await state.clear()
 
 
-# ---------- WHITELIST ----------
+# ---------------- WHITELIST ----------------
 
-@dp.message(F.text=="درخواست وایت لیست")
+@dp.message(F.text=="Whitelist Request")
 async def wl_start(message: types.Message,state:FSMContext):
 
     await state.set_state(Whitelist.username)
@@ -356,14 +265,14 @@ async def wl_finish(message: types.Message,state:FSMContext):
 
     data=await state.get_data()
 
-    ticket=make_ticket()
+    ticket=ticket_id()
 
     TICKETS[ticket]={"user":message.from_user.id}
 
     await bot.send_sticker(message.chat.id,TICKET_STICKER)
 
     text=f"""
-درخواست وایت لیست
+Whitelist Request
 
 Minecraft: {data['username']}
 
@@ -377,25 +286,25 @@ Ticket: {ticket}
 
     await bot.send_message(STAFF_GROUP_ID,text,reply_markup=staff_buttons(ticket))
 
-    await message.answer("درخواست ارسال شد",reply_markup=main_menu())
+    await message.answer("درخواست شما ارسال شد",reply_markup=main_menu())
 
     await state.clear()
 
 
-# ---------- CONTACT ----------
+# ---------------- CONTACT ----------------
 
-@dp.message(F.text=="تماس با استاف")
+@dp.message(F.text=="Contact Staff")
 async def contact_start(message: types.Message,state:FSMContext):
 
-    await state.set_state(Contact.reason)
+    await state.set_state(Contact.subject)
 
     await message.answer("موضوع پیام را بنویسید")
 
 
-@dp.message(Contact.reason)
-async def contact_reason(message: types.Message,state:FSMContext):
+@dp.message(Contact.subject)
+async def contact_subject(message: types.Message,state:FSMContext):
 
-    await state.update_data(reason=message.text)
+    await state.update_data(subject=message.text)
 
     await state.set_state(Contact.message)
 
@@ -407,14 +316,14 @@ async def contact_finish(message: types.Message,state:FSMContext):
 
     data=await state.get_data()
 
-    ticket=make_ticket()
+    ticket=ticket_id()
 
     TICKETS[ticket]={"user":message.from_user.id}
 
     text=f"""
-تماس با استاف
+Contact Staff
 
-موضوع: {data['reason']}
+Subject: {data['subject']}
 
 Message:
 {message.text}
@@ -426,19 +335,19 @@ Ticket: {ticket}
 
     await bot.send_message(STAFF_GROUP_ID,text,reply_markup=staff_buttons(ticket))
 
-    await message.answer("تیکت شما ارسال شد",reply_markup=main_menu())
+    await message.answer("پیام شما برای استاف ارسال شد",reply_markup=main_menu())
 
     await state.clear()
 
 
-# ---------- SHOP ----------
+# ---------------- SHOP ----------------
 
-@dp.message(F.text=="فروشگاه سرور")
+@dp.message(F.text=="Shop")
 async def shop(message: types.Message):
 
     await bot.send_sticker(message.chat.id,SHOP_STICKER)
 
-    await message.answer("بخش فروشگاه",reply_markup=shop_menu())
+    await message.answer("بخش فروشگاه سرور",reply_markup=shop_menu())
 
 
 @dp.callback_query(F.data=="rank")
@@ -448,7 +357,23 @@ async def rank(callback: types.CallbackQuery,state:FSMContext):
 
     await state.set_state(Shop.message)
 
-    await callback.message.answer("نام رنک و یوزرنیم ماینکرفت را بنویسید")
+    text="""
+Rank Shop
+
+Vip » 49,000 Toman
+Elite » 100,000 Toman
+TheFellOmen » 190,000 Toman
+Sponsor » 250,000 Toman
+Lover » 400,000 Toman
+
+اگر فقط نیاز به کیت دارید
+نام رنک و کیت را بنویسید
+
+مثال
+کیت رنک الایت
+"""
+
+    await callback.message.edit_text(text)
 
 
 @dp.callback_query(F.data=="coin")
@@ -458,7 +383,20 @@ async def coin(callback: types.CallbackQuery,state:FSMContext):
 
     await state.set_state(Shop.message)
 
-    await callback.message.answer("تعداد کوین و یوزرنیم ماینکرفت را بنویسید")
+    text="""
+Coin Shop
+
+50 Coin » 15,000 Toman
+100 Coins » 30,000 Toman
+150 Coins » 55,000 Toman
+200 Coins » 80,000 Toman
+250 Coins » 150,000 Toman
+
+اگر مقدار بیشتری میخواهید
+عدد مورد نظر را در چت بنویسید
+"""
+
+    await callback.message.edit_text(text)
 
 
 @dp.message(Shop.message)
@@ -466,12 +404,12 @@ async def shop_finish(message: types.Message,state:FSMContext):
 
     data=await state.get_data()
 
-    ticket=make_ticket()
+    ticket=ticket_id()
 
     TICKETS[ticket]={"user":message.from_user.id}
 
     text=f"""
-خرید از فروشگاه
+Shop Order
 
 Category: {data['category']}
 
@@ -490,51 +428,41 @@ Ticket: {ticket}
     await state.clear()
 
 
-# ---------- STAFF ----------
+# ---------------- BROADCAST ----------------
 
-@dp.callback_query(F.data.startswith("accept"))
-async def accept(callback: types.CallbackQuery):
+@dp.message(Command("broadcast"))
+async def broadcast(message: types.Message):
 
-    ticket=callback.data.split(":")[1]
+    if message.chat.id != STAFF_GROUP_ID:
+        return
 
-    user=TICKETS[ticket]["user"]
+    if not message.reply_to_message:
+        await message.reply("روی یک پیام ریپلای کنید")
+        return
 
-    await bot.send_message(user,"درخواست شما تایید شد")
+    msg = message.reply_to_message.text
 
-    file=create_transcript(ticket)
+    sent = 0
 
-    if file:
+    for user in USERS:
 
-        await bot.send_document(STAFF_GROUP_ID,types.FSInputFile(file))
+        try:
 
-    await callback.message.reply(f"تیکت {ticket} تایید شد")
+            await bot.send_message(user,msg)
 
+            sent+=1
 
-@dp.callback_query(F.data.startswith("deny"))
-async def deny(callback: types.CallbackQuery):
+        except:
+            pass
 
-    ticket=callback.data.split(":")[1]
-
-    user=TICKETS[ticket]["user"]
-
-    await bot.send_message(user,"درخواست شما رد شد")
-
-    file=create_transcript(ticket)
-
-    if file:
-
-        await bot.send_document(STAFF_GROUP_ID,types.FSInputFile(file))
-
-    await callback.message.reply(f"تیکت {ticket} رد شد")
+    await message.reply(f"{sent} پیام ارسال شد")
 
 
-# ---------- MAIN ----------
+# ---------------- MAIN ----------------
 
 async def main():
 
     load_users()
-
-    keep_alive()
 
     await bot.delete_webhook(drop_pending_updates=True)
 
