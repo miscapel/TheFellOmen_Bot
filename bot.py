@@ -1,6 +1,5 @@
 import os
 import uuid
-import html
 import asyncio
 import threading
 
@@ -14,14 +13,13 @@ from aiogram.fsm.storage.memory import MemoryStorage
 
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 STAFF_GROUP_ID = int(os.getenv("STAFF_GROUP_ID"))
-ADMIN_ID = int(os.getenv("ADMIN_ID"))
 
 bot = Bot(token=BOT_TOKEN)
 dp = Dispatcher(storage=MemoryStorage())
 
 TICKETS = {}
 
-# ---------------- FLASK KEEP ALIVE ----------------
+# ---------------- KEEP ALIVE ----------------
 
 app = Flask(__name__)
 
@@ -34,26 +32,26 @@ def run_web():
 
 # ---------------- STATES ----------------
 
-class PunishmentAppeal(StatesGroup):
+class Punishment(StatesGroup):
     username = State()
     punish_id = State()
     reason = State()
     message = State()
 
-class WhitelistState(StatesGroup):
+class Whitelist(StatesGroup):
     username = State()
 
-class SupportState(StatesGroup):
+class Support(StatesGroup):
     message = State()
 
 class StaffReply(StatesGroup):
-    replying = State()
+    message = State()
 
-# ---------------- MENUS ----------------
+# ---------------- MENU ----------------
 
-def main_menu():
+def menu():
 
-    keyboard = InlineKeyboardMarkup(inline_keyboard=[
+    return InlineKeyboardMarkup(inline_keyboard=[
 
         [InlineKeyboardButton(text="⚖️ Punishment Appeal", callback_data="punishment")],
 
@@ -65,8 +63,6 @@ def main_menu():
 
     ])
 
-    return keyboard
-
 # ---------------- START ----------------
 
 @dp.message(Command("start"))
@@ -74,14 +70,10 @@ async def start(message: types.Message):
 
     await message.answer(
 
-        "🌙 به ربات سرور <b>TheFellOmen</b> خوش آمدید.\n\n"
-        "از منوی زیر بخش مورد نظر خود را انتخاب کنید:\n\n"
-        "⚖️ درخواست بررسی بن\n"
-        "✅ درخواست وایت لیست\n"
-        "🎧 ارتباط با مدیریت\n"
-        "🛒 فروشگاه سرور",
+        "🌙 Welcome to TheFellOmen server bot\n\n"
+        "Select one option below.",
 
-        reply_markup=main_menu()
+        reply_markup=menu()
 
     )
 
@@ -92,93 +84,67 @@ async def punishment(call: types.CallbackQuery, state: FSMContext):
 
     await call.message.edit_text(
 
-        "⚖️ <b>درخواست بررسی بن</b>\n\n"
-        "درخواست خود را در چت به این صورت ارسال کنید:\n\n"
+        "Punishment Appeal\n\n"
+        "Send information like this:\n\n"
         "Username\n"
         "Punishment ID\n"
         "Reason\n"
         "Message\n\n"
-        "مثال:\n"
-        "miscapel\n"
-        "14231\n"
-        "Cheating\n"
-        "Please unban me\n\n"
-        "ابتدا یوزرنیم ماینکرفت خود را ارسال کنید."
+        "First send your Minecraft username."
 
     )
 
-    await state.set_state(PunishmentAppeal.username)
+    await state.set_state(Punishment.username)
     await call.answer()
 
-# username
-
-@dp.message(PunishmentAppeal.username)
-async def punish_username(message: types.Message, state: FSMContext):
+@dp.message(Punishment.username)
+async def p_user(message: types.Message, state: FSMContext):
 
     await state.update_data(username=message.text)
 
-    await message.answer(
-        "✅ یوزرنیم دریافت شد.\n\n"
-        "حالا <b>Punishment ID</b> خود را ارسال کنید."
-    )
+    await message.answer("Now send Punishment ID")
 
-    await state.set_state(PunishmentAppeal.punish_id)
+    await state.set_state(Punishment.punish_id)
 
-# punish id
-
-@dp.message(PunishmentAppeal.punish_id)
-async def punish_id(message: types.Message, state: FSMContext):
+@dp.message(Punishment.punish_id)
+async def p_id(message: types.Message, state: FSMContext):
 
     await state.update_data(punish_id=message.text)
 
-    await message.answer(
-        "✅ Punishment ID ثبت شد.\n\n"
-        "لطفاً دلیل بن شدن را بنویسید."
-    )
+    await message.answer("Send reason of punishment")
 
-    await state.set_state(PunishmentAppeal.reason)
+    await state.set_state(Punishment.reason)
 
-# reason
-
-@dp.message(PunishmentAppeal.reason)
-async def punish_reason(message: types.Message, state: FSMContext):
+@dp.message(Punishment.reason)
+async def p_reason(message: types.Message, state: FSMContext):
 
     await state.update_data(reason=message.text)
 
-    await message.answer(
-        "لطفاً توضیح کامل درخواست خود را بنویسید."
-    )
+    await message.answer("Send your appeal message")
 
-    await state.set_state(PunishmentAppeal.message)
+    await state.set_state(Punishment.message)
 
-# final message
-
-@dp.message(PunishmentAppeal.message)
-async def punish_final(message: types.Message, state: FSMContext):
+@dp.message(Punishment.message)
+async def p_finish(message: types.Message, state: FSMContext):
 
     data = await state.get_data()
-
-    username = data["username"]
-    punish_id = data["punish_id"]
-    reason = data["reason"]
-    user_message = message.text
 
     ticket_id = str(uuid.uuid4())[:8]
 
     TICKETS[ticket_id] = message.from_user.id
 
-    staff_text = (
+    text = (
 
-        "🚨 <b>Punishment Appeal</b>\n\n"
+        "New Punishment Appeal\n\n"
 
-        f"👤 User: {html.escape(message.from_user.full_name)}\n"
-        f"🆔 UserID: <code>{message.from_user.id}</code>\n\n"
+        f"User: {message.from_user.full_name}\n"
+        f"UserID: {message.from_user.id}\n\n"
 
-        f"🎮 Username: <b>{html.escape(username)}</b>\n"
-        f"📌 Punishment ID: <code>{html.escape(punish_id)}</code>\n"
-        f"⚠️ Reason: {html.escape(reason)}\n\n"
+        f"Username: {data['username']}\n"
+        f"PunishID: {data['punish_id']}\n"
+        f"Reason: {data['reason']}\n\n"
 
-        f"💬 Message:\n{html.escape(user_message)}"
+        f"Message:\n{message.text}"
 
     )
 
@@ -195,16 +161,9 @@ async def punish_final(message: types.Message, state: FSMContext):
 
     ])
 
-    await bot.send_message(
-        STAFF_GROUP_ID,
-        staff_text,
-        reply_markup=keyboard
-    )
+    await bot.send_message(STAFF_GROUP_ID, text, reply_markup=keyboard)
 
-    await message.answer(
-        "✅ درخواست شما برای تیم مدیریت ارسال شد.\n"
-        "پس از بررسی نتیجه برای شما ارسال خواهد شد."
-    )
+    await message.answer("Your request was sent to staff.")
 
     await state.clear()
 
@@ -215,60 +174,15 @@ async def whitelist(call: types.CallbackQuery, state: FSMContext):
 
     await call.message.edit_text(
 
-        "✅ <b>درخواست Whitelist</b>\n\n"
-        "برای ورود به سرور باید در لیست سفید قرار بگیرید.\n\n"
-        "لطفاً یوزرنیم ماینکرفت خود را ارسال کنید.\n\n"
-        "مثال:\n"
-        "miscapel"
+        "Whitelist Request\n\n"
+        "Send your Minecraft username."
 
     )
 
-    await state.set_state(WhitelistState.username)
+    await state.set_state(Whitelist.username)
 
-    await call.answer()
-
-@dp.message(WhitelistState.username)
-async def whitelist_send(message: types.Message, state: FSMContext):
-
-    username = message.text
-
-    text = (
-
-        "✅ <b>Whitelist Request</b>\n\n"
-
-        f"👤 User: {message.from_user.full_name}\n"
-        f"🆔 ID: <code>{message.from_user.id}</code>\n"
-        f"🎮 Username: <b>{username}</b>"
-
-    )
-
-    await bot.send_message(STAFF_GROUP_ID, text)
-
-    await message.answer(
-        "✅ درخواست شما برای تیم مدیریت ارسال شد."
-    )
-
-    await state.clear()
-
-# ---------------- SUPPORT ----------------
-
-@dp.callback_query(F.data == "support")
-async def support(call: types.CallbackQuery, state: FSMContext):
-
-    await call.message.edit_text(
-
-        "🎧 <b>ارتباط با تیم مدیریت</b>\n\n"
-        "اگر سوال یا مشکلی دارید پیام خود را ارسال کنید.\n\n"
-        "تیم مدیریت در سریع‌ترین زمان پاسخ خواهد داد."
-
-    )
-
-    await state.set_state(SupportState.message)
-
-    await call.answer()
-
-@dp.message(SupportState.message)
-async def support_send(message: types.Message, state: FSMContext):
+@dp.message(Whitelist.username)
+async def whitelist_finish(message: types.Message, state: FSMContext):
 
     ticket_id = str(uuid.uuid4())[:8]
 
@@ -276,12 +190,11 @@ async def support_send(message: types.Message, state: FSMContext):
 
     text = (
 
-        "🎧 <b>Support Ticket</b>\n\n"
+        "Whitelist Request\n\n"
 
-        f"👤 User: {message.from_user.full_name}\n"
-        f"🆔 ID: <code>{message.from_user.id}</code>\n\n"
-
-        f"💬 Message:\n{message.text}"
+        f"User: {message.from_user.full_name}\n"
+        f"UserID: {message.from_user.id}\n"
+        f"Username: {message.text}"
 
     )
 
@@ -298,15 +211,60 @@ async def support_send(message: types.Message, state: FSMContext):
 
     ])
 
-    await bot.send_message(
-        STAFF_GROUP_ID,
-        text,
-        reply_markup=keyboard
+    await bot.send_message(STAFF_GROUP_ID, text, reply_markup=keyboard)
+
+    await message.answer("Whitelist request sent.")
+
+    await state.clear()
+
+# ---------------- SUPPORT ----------------
+
+@dp.callback_query(F.data == "support")
+async def support(call: types.CallbackQuery, state: FSMContext):
+
+    await call.message.edit_text(
+
+        "Support\n\n"
+        "Send your problem or question."
+
     )
 
-    await message.answer(
-        "✅ پیام شما برای تیم مدیریت ارسال شد."
+    await state.set_state(Support.message)
+
+@dp.message(Support.message)
+async def support_finish(message: types.Message, state: FSMContext):
+
+    ticket_id = str(uuid.uuid4())[:8]
+
+    TICKETS[ticket_id] = message.from_user.id
+
+    text = (
+
+        "Support Ticket\n\n"
+
+        f"User: {message.from_user.full_name}\n"
+        f"UserID: {message.from_user.id}\n\n"
+
+        f"Message:\n{message.text}"
+
     )
+
+    keyboard = InlineKeyboardMarkup(inline_keyboard=[
+
+        [
+            InlineKeyboardButton(text="✅ Accept", callback_data=f"accept_{ticket_id}"),
+            InlineKeyboardButton(text="❌ Deny", callback_data=f"deny_{ticket_id}")
+        ],
+
+        [
+            InlineKeyboardButton(text="💬 Reply", callback_data=f"reply_{ticket_id}")
+        ]
+
+    ])
+
+    await bot.send_message(STAFF_GROUP_ID, text, reply_markup=keyboard)
+
+    await message.answer("Support ticket sent.")
 
     await state.clear()
 
@@ -317,61 +275,51 @@ async def shop(call: types.CallbackQuery):
 
     await call.message.edit_text(
 
-        "🛒 <b>فروشگاه سرور</b>\n\n"
-        "برای خرید آیتم‌ها به لینک زیر مراجعه کنید:\n\n"
-        "store link here"
+        "Server Shop\n\n"
+        "Visit our store:\n"
+        "your-store-link"
 
     )
-
-    await call.answer()
 
 # ---------------- STAFF ACTIONS ----------------
 
 @dp.callback_query(F.data.startswith("accept_"))
-async def accept_ticket(call: types.CallbackQuery):
+async def accept(call: types.CallbackQuery):
 
     ticket_id = call.data.split("_")[1]
 
     user_id = TICKETS.get(ticket_id)
 
     if user_id:
-        await bot.send_message(
-            user_id,
-            "✅ درخواست شما توسط تیم مدیریت پذیرفته شد."
-        )
+        await bot.send_message(user_id, "✅ Your request was accepted.")
 
     await call.answer("Accepted")
 
 @dp.callback_query(F.data.startswith("deny_"))
-async def deny_ticket(call: types.CallbackQuery):
+async def deny(call: types.CallbackQuery):
 
     ticket_id = call.data.split("_")[1]
 
     user_id = TICKETS.get(ticket_id)
 
     if user_id:
-        await bot.send_message(
-            user_id,
-            "❌ درخواست شما رد شد."
-        )
+        await bot.send_message(user_id, "❌ Your request was denied.")
 
     await call.answer("Denied")
 
 @dp.callback_query(F.data.startswith("reply_"))
-async def reply_ticket(call: types.CallbackQuery, state: FSMContext):
+async def reply(call: types.CallbackQuery, state: FSMContext):
 
     ticket_id = call.data.split("_")[1]
 
     await state.update_data(ticket=ticket_id)
 
-    await state.set_state(StaffReply.replying)
+    await state.set_state(StaffReply.message)
 
-    await call.message.reply("پیام خود را برای کاربر ارسال کنید.")
+    await call.message.reply("Send your reply")
 
-    await call.answer()
-
-@dp.message(StaffReply.replying)
-async def send_reply(message: types.Message, state: FSMContext):
+@dp.message(StaffReply.message)
+async def reply_send(message: types.Message, state: FSMContext):
 
     data = await state.get_data()
 
@@ -380,13 +328,9 @@ async def send_reply(message: types.Message, state: FSMContext):
     user_id = TICKETS.get(ticket_id)
 
     if user_id:
+        await bot.send_message(user_id, f"Staff reply:\n\n{message.text}")
 
-        await bot.send_message(
-            user_id,
-            f"💬 پاسخ تیم مدیریت:\n\n{message.text}"
-        )
-
-    await message.answer("✅ پیام ارسال شد.")
+    await message.answer("Reply sent.")
 
     await state.clear()
 
@@ -396,11 +340,7 @@ async def main():
 
     await bot.set_my_commands([
 
-        BotCommand(command="start", description="شروع ربات"),
-        BotCommand(command="punishment", description="درخواست بررسی بن"),
-        BotCommand(command="whitelist", description="درخواست وایت لیست"),
-        BotCommand(command="support", description="ارتباط با مدیریت"),
-        BotCommand(command="shop", description="فروشگاه")
+        BotCommand(command="start", description="Start bot")
 
     ])
 
