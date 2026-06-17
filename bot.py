@@ -174,3 +174,99 @@ async def open_support(call: types.CallbackQuery, state: FSMContext):
 @dp.callback_query(F.data == "menu_shop")
 async def open_shop(call: types.CallbackQuery):
     await call.message.edit_text("🛒 Shop Menu", reply_markup=shop_menu())
+    # -------------------- TICKETS --------------------
+
+async def send_ticket(message: types.Message, category: str):
+
+    ticket_id = str(uuid.uuid4())[:8]
+
+    TICKETS[ticket_id] = message.from_user.id
+
+    user = message.from_user
+
+    text = (
+        f"🎫 <b>New Ticket</b>\n\n"
+        f"ID: <code>{ticket_id}</code>\n"
+       f"User: {html.escape(user.full_name)}\n"
+        f"UserID: <code>{user.id}</code>\n"
+        f"Type: {category}"
+    )
+
+    keyboard = types.InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                types.InlineKeyboardButton(text="✅ Accept", callback_data=f"accept_{ticket_id}"),
+                types.InlineKeyboardButton(text="❌ Deny", callback_data=f"deny_{ticket_id}")
+            ],
+            [
+                types.InlineKeyboardButton(text="💬 Reply", callback_data=f"reply_{ticket_id}")
+            ]
+        ]
+    )
+
+    await message.copy_to(STAFF_GROUP_I, caption=text, reply_markup=keyboard)
+
+    await message.answer("✅ Your ticket was sent to staff.")
+@dp.message(UserState.punishment)
+async def punishment_ticket(message: types.Message, state: FSMContext):
+
+    await send_ticket(message, "Punishment Appeal")
+
+    await state.clear()
+
+
+@dp.message(UserState.whitelist)
+async def whitelist_ticket(message: types.Message, state: FSMContext):
+
+    await send_ticket(message, "Whitelist")
+
+    await state.clear()
+
+
+@dp.message(UserState.support)
+async def support_ticket(message: types.Message, state: FSMContext):
+
+    await send_ticket(message, "Support")
+
+    await state.clear()
+@dp.callback_query(F.data.startswith("accept_"))
+async def accept_ticket(call: types.CallbackQuery):
+
+    ticket_id = call.data.split("_")[1]
+
+    user_id = TICKETS.get(ticket_id)
+
+    if not user_id:
+        return
+
+    await bot.send_message(user_id, "✅ Your request was accepted.")
+
+    await call.answer("Accepted")
+
+
+@dp.callback_query(F.data.startswith("deny_"))
+async def deny_ticket(call: types.CallbackQuery):
+
+    ticket_id = call.data.split("_")[1]
+
+    user_id = TICKETS.get(ticket_id)
+
+    if not user_id:
+        return
+
+    await bot.send_message(user_id, "❌ Your request was denied.")
+
+    await call.answer("Denied")
+
+
+@dp.callback_query(F.data.startswith("reply_"))
+async def reply_ticket(call: types.CallbackQuery, state: FSMContext):
+
+    ticket_id = call.data.split("_")[1]
+
+    await state.update_data(ticket=ticket_id)
+
+    await state.set_state(StaffState.replying)
+
+    await call.message.reply("Send reply message to user.")
+
