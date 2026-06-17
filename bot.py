@@ -3,8 +3,11 @@ import html
 import json
 import logging
 import os
+import re
 import threading
+import time
 import uuid
+from collections import defaultdict, deque
 from datetime import datetime
 from pathlib import Path
 
@@ -15,140 +18,159 @@ from aiogram.filters import Command
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
 from aiogram.fsm.storage.memory import MemoryStorage
-from aiogram.types import BotCommand, BotCommandScopeChat, BotCommandScopeDefault
+from aiogram.types import (
+    BotCommand,
+    BotCommandScopeChat,
+    BotCommandScopeDefault,
+    ChatPermissions,
+)
+from aiogram.exceptions import TelegramBadRequest, TelegramForbiddenError
 from dotenv import load_dotenv
 from flask import Flask
 
-# --- تنظیمات اولیه ---
-logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
+# -------------------- CONFIG --------------------
+
+logging.basicConfig(level=logging.INFO)
 load_dotenv()
 
 BOT_TOKEN = os.getenv("BOT_TOKEN")
-STAFF_GROUP_ID = os.getenv("STAFF_GROUP_ID")
-ADMIN_ID = os.getenv("ADMIN_ID", "0")
-PORT = int(os.getenv("PORT", "10000"))
-WELCOME_STICKER_ID = os.getenv("WELCOME_STICKER_ID", "")
-SUCCESS_STICKER_ID = os.getenv("SUCCESS_STICKER_ID", "")
+STAFF_GROUP_ID = int(os.getenv("STAFF_GROUP_ID"))
+ADMIN_ID = int(os.getenv("ADMIN_ID"))
+PORT = int(os.getenv("PORT", 10000))
 
 if not BOT_TOKEN or not STAFF_GROUP_ID:
-    raise RuntimeError("BOT_TOKEN or STAFF_GROUP_ID is missing")
+    raise RuntimeError("Missing BOT_TOKEN or STAFF_GROUP_ID")
 
 bot = Bot(token=BOT_TOKEN, default=DefaultBotProperties(parse_mode=ParseMode.HTML))
 dp = Dispatcher(storage=MemoryStorage())
 app = Flask(__name__)
 
-# --- وضعیت‌ها ---
+# -------------------- STATES --------------------
+
 class UserState(StatesGroup):
-    punishment_appeal = State()
+    punishment = State()
     whitelist = State()
-    contact_staff = State()
-    rank_shop_message = State()
-    coin_shop_message = State()
+    support = State()
 
 class StaffState(StatesGroup):
     replying = State()
 
-# --- ابزارها و دیتابیس ---
-USERS_FILE = Path("users.json")
-TICKETS = {}
-STAFF_MESSAGE_TO_TICKET = {}
-USER_IDS = set()
+# -------------------- DATABASE --------------------
 
-def safe(v): return html.escape(str(v or "-"))
-def is_admin(uid): return int(uid) == int(ADMIN_ID)
+USERS_FILE = Path("users.json")
+WARNS_FILE = Path("warns.json")
+
+USERS = set()
+WARNS = {}
+TICKETS = {}
 
 def load_users():
-    global USER_IDS
+    global USERS
     if USERS_FILE.exists():
-        USER_IDS = {int(u) for u in json.loads(USERS_FILE.read_text(encoding="utf-8"))}
+        USERS = set(json.loads(USERS_FILE.read_text()))
 
 def save_users():
-    USERS_FILE.write_text(json.dumps(sorted(USER_IDS), ensure_ascii=False), encoding="utf-8")
+    USERS_FILE.write_text(json.dumps(list(USERS)))
 
 def remember_user(user):
-    if user and user.id not in USER_IDS:
-        USER_IDS.add(user.id)
+    if user.id not in USERS:
+        USERS.add(user.id)
         save_users()
 
-# --- منوها ---
-def main_menu_keyboard():
+def load_warns():
+    global WARNS
+    if WARNS_FILE.exists():
+        WARNS = json.loads(WARNS_FILE.read_text())
+
+def save_warns():
+    WARNS_FILE.write_text(json.dumps(WARNS))
+
+def warn_key(chat_id, user_id):
+    return f"{chat_id}:{user_id}"
+
+def add_warn(chat_id, user_id):
+    key = warn_key(chat_id, user_id)
+    WARNS[key] = WARNS.get(key, 0) + 1
+    save_warns()
+    return WARNS[key]
+
+def clear_warn(chat_id, user_id):
+    key = warn_key(chat_id, user_id)
+    if key in WARNS:
+        del WARNS[key]
+        save_warns()
+
+def get_warn(chat_id, user_id):
+    return WARNS.get(warn_key(chat_id, user_id), 0)
+
+# -------------------- KEYBOARDS --------------------
+
+def main_menu():
     return types.InlineKeyboardMarkup(inline_keyboard=[
-        [types.InlineKeyboardButton(text="⚖️ Punishment Appeal", callback_data="menu:punishment")],
-        [types.InlineKeyboardButton(text="✅ Whitelist", callback_data="menu:whitelist")],
-        [types.InlineKeyboardButton(text="🎧 Contact Staff", callback_data="menu:contact")],
-        [types.InlineKeyboardButton(text="🛒 Shop", callback_data="menu:shop")]
+        [types.InlineKeyboardButton(text="⚖️ Punishment", callback_data="menu_punishment")],
+        [types.InlineKeyboardButton(text="✅ Whitelist", callback_data="menu_whitelist")],
+        [types.InlineKeyboardButton(text="🎧 Support", callback_data="menu_support")],
+        [types.InlineKeyboardButton(text="🛒 Shop", callback_data="menu_shop")]
     ])
 
-def shop_keyboard():
+def shop_menu():
     return types.InlineKeyboardMarkup(inline_keyboard=[
-        [types.InlineKeyboardButton(text="👑 Rank Shop", callback_data="shop:rank")],
-        [types.InlineKeyboardButton(text="🪙 Coin Shop", callback_data="shop:coin")],
-        [types.InlineKeyboardButton(text="🔙 Back", callback_data="menu:back")]
+        [types.InlineKeyboardButton(text="👑 Rank Shop", callback_data="shop_rank")],
+        [types.InlineKeyboardButton(text="🪙 Coin Shop", callback_data="shop_coin")],
+        [types.InlineKeyboardButton(text="🔙 Back", callback_data="menu_back")]
     ])
+# -------------------- COMMAND MENU --------------------
 
-async def set_bot_commands():
-    cmds = [
-        BotCommand(command="start", description="منوی اصلی"),
-        BotCommand(command="punishment", description="درخواست آن‌بن/آن‌میوت"),
-        BotCommand(command="whitelist", description="درخواست وایت‌لیست"),
-        BotCommand(command="shop", description="فروشگاه"),
-        BotCommand(command="support", description="ارتباط با استف"),
-        BotCommand(command="help", description="راهنما"),
+async def set_commands():
+    user_cmds = [
+        BotCommand(command="start", description="Main Menu"),
+        BotCommand(command="punishment", description="Appeal"),
+        BotCommand(command="whitelist", description="Whitelist"),
+        BotCommand(command="support", description="Support"),
+        BotCommand(command="shop", description="Shop"),
     ]
-    await bot.set_my_commands(cmds, scope=BotCommandScopeDefault())
-    if ADMIN_ID != "0":
-        await bot.set_my_commands(cmds + [BotCommand(command="broadcast", description="ارسال همگانی")], 
-                                  scope=BotCommandScopeChat(chat_id=int(ADMIN_ID)))
 
-# --- هندلرهای دستورات (Commands) ---
+    await bot.set_my_commands(user_cmds, scope=BotCommandScopeDefault())
+
+    admin_cmds = user_cmds + [
+        BotCommand(command="broadcast", description="Broadcast"),
+        BotCommand(command="warns", description="Check warns"),
+        BotCommand(command="clearwarn", description="Clear warns"),
+        BotCommand(command="mute", description="Mute"),
+        BotCommand(command="unmute", description="Unmute"),
+    ]
+
+    await bot.set_my_commands(admin_cmds, scope=BotCommandScopeChat(chat_id=ADMIN_ID))
+
+
+# -------------------- START --------------------
+
 @dp.message(Command("start"))
-async def start(msg: types.Message, state: FSMContext):
-    remember_user(msg.from_user)
+async def start(message: types.Message, state: FSMContext):
+    remember_user(message.from_user)
     await state.clear()
-    await msg.answer("🌙 <b>TheFellOmen</b>\nلطفاً یکی از بخش‌ها را انتخاب کن:", reply_markup=main_menu_keyboard())
+    await message.answer("🌙 Welcome to TheFellOmen", reply_markup=main_menu())
 
-@dp.message(Command("punishment"))
-async def cmd_punishment(msg: types.Message, state: FSMContext):
-    await state.set_state(UserState.punishment_appeal)
-    await msg.answer("⚖️ <b>Punishment Appeal</b>\nتوضیحات و مدارک خود را بفرست:")
+@dp.callback_query(F.data == "menu_back")
+async def back_menu(call: types.CallbackQuery, state: FSMContext):
+    await state.clear()
+    await call.message.edit_text("🌙 Main Menu", reply_markup=main_menu())
 
-@dp.message(Command("whitelist"))
-async def cmd_whitelist(msg: types.Message, state: FSMContext):
+@dp.callback_query(F.data == "menu_punishment")
+async def open_punishment(call: types.CallbackQuery, state: FSMContext):
+    await state.set_state(UserState.punishment)
+    await call.message.edit_text("⚖️ Send your appeal message.")
+
+@dp.callback_query(F.data == "menu_whitelist")
+async def open_whitelist(call: types.CallbackQuery, state: FSMContext):
     await state.set_state(UserState.whitelist)
-    await msg.answer("✅ <b>Whitelist Request</b>\nیوزرنیم و مدارک خود را بفرست:")
+    await call.message.edit_text("✅ Send your Minecraft username.")
 
-@dp.message(Command("shop"))
-async def cmd_shop(msg: types.Message, state: FSMContext):
-    await state.clear()
-    await msg.answer("🛒 <b>Shop</b>\nبخش مورد نظر را انتخاب کن:", reply_markup=shop_keyboard())
+@dp.callback_query(F.data == "menu_support")
+async def open_support(call: types.CallbackQuery, state: FSMContext):
+    await state.set_state(UserState.support)
+    await call.message.edit_text("🎧 Send your support message.")
 
-@dp.message(Command("support"))
-async def cmd_support(msg: types.Message, state: FSMContext):
-    await state.set_state(UserState.contact_staff)
-    await msg.answer("🎧 <b>Contact Staff</b>\nپیام خود را برای استف بفرست:")
-
-@dp.message(Command("help"))
-async def cmd_help(msg: types.Message):
-    await msg.answer("📌 راهنمای ربات: از منوی پایین استفاده کن یا از دستورات میان‌بر استفاده کن.")
-
-@dp.message(Command("broadcast"))
-async def cmd_broadcast(msg: types.Message):
-    if not is_admin(msg.from_user.id): return
-    # کدهای broadcast اینجا قرار می‌گیرند...
-    await msg.reply("📣 قابلیت Broadcast فعال است. (پیام خود را ریپلای کن)")
-
-# --- هندلرهای Callback و پیام‌ها (باقی مانده منطق قبلی...) ---
-# (نکته: بقیه هندلرها مثل قبل به همین صورت ادامه می‌یابد)
-# برای رعایت محدودیت کاراکتر، فقط بخش‌های جدید را اصلاح کردم.
-
-@app.route("/")
-def home(): return "Bot is running!"
-
-async def main():
-    load_users()
-    await set_bot_commands()
-    threading.Thread(target=lambda: app.run(host="0.0.0.0", port=PORT), daemon=True).start()
-    await dp.start_polling(bot)
-
-if __name__ == "__main__":
-    asyncio.run(main())
+@dp.callback_query(F.data == "menu_shop")
+async def open_shop(call: types.CallbackQuery):
+    await call.message.edit_text("🛒 Shop Menu", reply_markup=shop_menu())
