@@ -22,8 +22,11 @@ BOT_TOKEN = os.getenv("BOT_TOKEN")
 
 STAFF_GROUP_ID = -1004332150226
 
-# استیکر خوش آمدگویی
-WELCOME_STICKER = "CAACAgQAAxkBAAEBExampleStickerID"
+# استیکرها (لطفاً این ID ها را با استیکرهای دلخواه خودتان جایگزین کنید)
+WELCOME_STICKER = "CAACAgQAAxkBAAEBExampleStickerID1" # استیکر خوش آمدگویی
+SUCCESS_STICKER = "CAACAgQAAxkBAAEBExampleStickerID2" # استیکر موفقیت آمیز
+SHOP_STICKER = "CAACAgQAAxkBAAEBExampleStickerID3"    # استیکر فروشگاه
+TICKET_STICKER = "CAACAgQAAxkBAAEBExampleStickerID4"  # استیکر تیکت
 
 logging.basicConfig(level=logging.INFO)
 
@@ -153,15 +156,22 @@ class Shop(StatesGroup):
 @dp.message(Command("start"))
 async def start(message: types.Message):
 
+    await message.answer_sticker(WELCOME_STICKER)
+
     text = """
-🔥 <b>TheFellOmen Support Center</b>
+🔥 <b>Welcome to TheFellOmen Network</b>
 
 به سیستم رسمی پشتیبانی سرور خوش آمدید.
 
-از دکمه‌های زیر استفاده کنید.
-"""
+در اینجا می‌توانید:
 
-    await message.answer_sticker(WELCOME_STICKER)
+⚖️ درخواست Unban بدهید  
+📜 درخواست Whitelist ثبت کنید  
+🆘 با Staff ارتباط بگیرید  
+💎 از Shop خرید کنید  
+
+یکی از گزینه‌های زیر را انتخاب کنید 👇
+"""
 
     await message.answer(
         text,
@@ -169,7 +179,7 @@ async def start(message: types.Message):
     )
 
     await message.answer(
-        "👇",
+        "🎮 Menu",
         reply_markup=main_menu()
     )
 
@@ -270,8 +280,10 @@ Ticket: {ticket}
         reply_markup=staff_buttons(ticket)
     )
 
+    await message.answer_sticker(SUCCESS_STICKER)
+
     await message.answer(
-        "✅ درخواست شما ارسال شد.",
+        "✅ درخواست شما برای استاف ارسال شد.",
         reply_markup=main_menu()
     )
 
@@ -349,8 +361,10 @@ Ticket: {ticket}
         reply_markup=staff_buttons(ticket)
     )
 
+    await message.answer_sticker(TICKET_STICKER)
+
     await message.answer(
-        "✅ درخواست ارسال شد.",
+        "✅ درخواست شما ارسال شد.",
         reply_markup=main_menu()
     )
 
@@ -418,8 +432,10 @@ Ticket: {ticket}
         reply_markup=staff_buttons(ticket)
     )
 
+    await message.answer_sticker(TICKET_STICKER)
+
     await message.answer(
-        "✅ تیکت ارسال شد.",
+        "✅ تیکت شما ارسال شد.",
         reply_markup=main_menu()
     )
 
@@ -431,8 +447,10 @@ Ticket: {ticket}
 @dp.message(F.text == "💎 Shop")
 async def shop(message: types.Message):
 
+    await message.answer_sticker(SHOP_STICKER)
+
     await message.answer(
-        "💎 Server Shop",
+        "💎 <b>TheFellOmen Store</b>",
         reply_markup=shop_menu()
     )
 
@@ -441,7 +459,7 @@ async def shop(message: types.Message):
 async def shop_inline(callback: types.CallbackQuery):
 
     await callback.message.edit_text(
-        "💎 Server Shop",
+        "💎 <b>TheFellOmen Store</b>",
         reply_markup=shop_menu()
     )
 
@@ -523,8 +541,10 @@ Ticket: {ticket}
         reply_markup=staff_buttons(ticket)
     )
 
+    await message.answer_sticker(SUCCESS_STICKER)
+
     await message.answer(
-        "✅ درخواست خرید ارسال شد.",
+        "✅ درخواست خرید شما ارسال شد.",
         reply_markup=main_menu()
     )
 
@@ -533,41 +553,7 @@ Ticket: {ticket}
 
 # ================= STAFF =================
 
-@dp.callback_query(F.data.startswith("accept"))
-async def accept(callback: types.CallbackQuery):
-
-    ticket = callback.data.split(":")[1]
-
-    user = TICKETS[ticket]["user"]
-
-    await bot.send_message(user, "✅ درخواست شما تایید شد.")
-
-    await callback.answer("Accepted")
-
-
-@dp.callback_query(F.data.startswith("deny"))
-async def deny(callback: types.CallbackQuery):
-
-    ticket = callback.data.split(":")[1]
-
-    user = TICKETS[ticket]["user"]
-
-    await bot.send_message(user, "❌ درخواست شما رد شد.")
-
-    await callback.answer("Denied")
-
-
-@dp.callback_query(F.data.startswith("reply"))
-async def reply(callback: types.CallbackQuery):
-
-    ticket = callback.data.split(":")[1]
-
-    REPLY_MODE[callback.from_user.id] = ticket
-
-    await callback.message.reply("پیام خود را ارسال کنید.")
-
-
-@dp.message()
+@dp.message(F.chat.id == STAFF_GROUP_ID)
 async def staff_reply(message: types.Message):
 
     if message.from_user.id not in REPLY_MODE:
