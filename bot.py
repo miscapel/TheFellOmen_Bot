@@ -3,14 +3,16 @@ import os
 import json
 import random
 import string
-from datetime import datetime
+import threading
+from flask import Flask
 from aiogram import Bot, Dispatcher, types, F
-from aiogram.enums import ParseMode
 from aiogram.filters import Command
+from aiogram.enums import ParseMode
 from aiogram.client.default import DefaultBotProperties
+from aiogram.fsm.storage.memory import MemoryStorage
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
-from aiogram.fsm.storage.memory import MemoryStorage
+
 
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 
@@ -31,6 +33,22 @@ dp = Dispatcher(storage=MemoryStorage())
 
 TICKETS = {}
 USERS = set()
+
+# ---------------- KEEP ALIVE ----------------
+
+app = Flask(__name__)
+
+@app.route('/')
+def home():
+    return "Bot is alive"
+
+def run():
+    port = int(os.environ.get("PORT",10000))
+    app.run(host="0.0.0.0",port=port)
+
+def keep_alive():
+    thread = threading.Thread(target=run)
+    thread.start()
 
 
 # ---------------- USERS ----------------
@@ -158,7 +176,7 @@ async def start(message: types.Message):
     text = """
 به مرکز پشتیبانی سرور TheFellOmen خوش آمدید
 
-از منوی زیر بخش مورد نظر خود را انتخاب کنید
+از منوی زیر گزینه مورد نظر خود را انتخاب کنید
 """
 
     await message.answer(text,reply_markup=main_menu())
@@ -228,14 +246,13 @@ Message:
 {message.text}
 
 Telegram: @{message.from_user.username}
-UserID: {message.from_user.id}
 
 Ticket: {ticket}
 """
 
     await bot.send_message(STAFF_GROUP_ID,text,reply_markup=staff_buttons(ticket))
 
-    await message.answer("درخواست شما برای استاف ارسال شد",reply_markup=main_menu())
+    await message.answer("درخواست شما ارسال شد",reply_markup=main_menu())
 
     await state.clear()
 
@@ -286,7 +303,7 @@ Ticket: {ticket}
 
     await bot.send_message(STAFF_GROUP_ID,text,reply_markup=staff_buttons(ticket))
 
-    await message.answer("درخواست شما ارسال شد",reply_markup=main_menu())
+    await message.answer("درخواست ارسال شد",reply_markup=main_menu())
 
     await state.clear()
 
@@ -335,7 +352,7 @@ Ticket: {ticket}
 
     await bot.send_message(STAFF_GROUP_ID,text,reply_markup=staff_buttons(ticket))
 
-    await message.answer("پیام شما برای استاف ارسال شد",reply_markup=main_menu())
+    await message.answer("پیام شما ارسال شد",reply_markup=main_menu())
 
     await state.clear()
 
@@ -347,7 +364,7 @@ async def shop(message: types.Message):
 
     await bot.send_sticker(message.chat.id,SHOP_STICKER)
 
-    await message.answer("بخش فروشگاه سرور",reply_markup=shop_menu())
+    await message.answer("فروشگاه سرور",reply_markup=shop_menu())
 
 
 @dp.callback_query(F.data=="rank")
@@ -366,11 +383,8 @@ TheFellOmen » 190,000 Toman
 Sponsor » 250,000 Toman
 Lover » 400,000 Toman
 
-اگر فقط نیاز به کیت دارید
+اگر فقط کیت میخواهید
 نام رنک و کیت را بنویسید
-
-مثال
-کیت رنک الایت
 """
 
     await callback.message.edit_text(text)
@@ -393,7 +407,7 @@ Coin Shop
 250 Coins » 150,000 Toman
 
 اگر مقدار بیشتری میخواهید
-عدد مورد نظر را در چت بنویسید
+عدد مورد نظر را بنویسید
 """
 
     await callback.message.edit_text(text)
@@ -442,20 +456,14 @@ async def broadcast(message: types.Message):
 
     msg = message.reply_to_message.text
 
-    sent = 0
-
     for user in USERS:
 
         try:
-
             await bot.send_message(user,msg)
-
-            sent+=1
-
         except:
             pass
 
-    await message.reply(f"{sent} پیام ارسال شد")
+    await message.reply("پیام ارسال شد")
 
 
 # ---------------- MAIN ----------------
@@ -464,11 +472,13 @@ async def main():
 
     load_users()
 
+    keep_alive()
+
     await bot.delete_webhook(drop_pending_updates=True)
 
     await dp.start_polling(bot)
 
 
-if __name__=="__main__":
+if __name__ == "__main__":
 
     asyncio.run(main())
