@@ -269,4 +269,137 @@ async def reply_ticket(call: types.CallbackQuery, state: FSMContext):
     await state.set_state(StaffState.replying)
 
     await call.message.reply("Send reply message to user.")
+@dp.message(StaffState.replying)
+async def staff_reply(message: types.Message, state: FSMContext):
+
+    data = await state.get_data()
+
+    ticket_id = data.get("ticket")
+
+    user_id = TICKETS.get(ticket_id)
+
+    if not user_id:
+        return
+
+    await message.copy_to(user_id)
+
+    await message.reply("✅ Reply sent.")
+
+    await state.clear()
+@dp.message(Command("broadcast"))
+async def broadcast(message: types.Message):
+
+    if message.from_user.id != ADMIN_ID:
+        return
+
+    if not message.reply_to_message:
+        await message.reply("Reply to a message to broadcast.")
+        return
+
+    count = 0
+
+    for user in USERS:
+
+        try:
+            await message.reply_to_message.copy_to(user)
+            count += 1
+        except:
+            pass
+
+    await message.reply(f"✅ Sent to {count} users.")
+SPAM = defaultdict(lambda: deque(maxlen=5))
+
+BAD_WORDS = {
+    "fuck","shit","bitch","porn","sex","xxx","18+","nsfw","hentai",
+    "کس","کیر","جنده","پورن","سکس"
+}
+
+LINK_RE = re.compile(r"(https?://|t\.me|discord\.gg)", re.I)
+
+
+@dp.message(F.chat.type.in_({ChatType.GROUP, ChatType.SUPERGROUP}))
+async def anti_spam(message: types.Message):
+
+    user = message.from_user
+
+    if not user:
+        return
+
+    text = (message.text or message.caption or "").lower()
+
+    # spam detect
+    now = time.time()
+    SPAM[user.id].append(now)
+
+    if len(SPAM[user.id]) >= 5 and now - SPAM[user.id][0] < 5:
+
+        await message.delete()
+
+        return
+
+    # swear detect
+    for w in BAD_WORDS:
+        if w in text:
+
+            await message.delete()
+
+            return
+
+    # link detect
+    if LINK_RE.search(text):
+
+        await message.delete()
+
+        return
+
+    # gif detect
+    if message.animation:
+
+        await message.delete()
+
+        return
+@app.route("/")
+def home():
+    return "Bot running"
+
+
+async def main():
+
+    load_users()
+    load_warns()
+
+    await set_commands()
+
+    threading.Thread(
+        target=lambda: app.run(host="0.0.0.0", port=PORT),
+        daemon=True
+    ).start()
+
+    await dp.start_polling(bot)
+
+
+if __name__ == "__main__":
+    asyncio.run(main())
+@app.route("/")
+def home():
+    return "Bot running"
+
+
+async def main():
+
+    load_users()
+    load_warns()
+
+    await set_commands()
+
+    threading.Thread(
+        target=lambda: app.run(host="0.0.0.0", port=PORT),
+        daemon=True
+    ).start()
+
+    await dp.start_polling(bot)
+
+
+if __name__ == "__main__":
+    asyncio.run(main())
 
