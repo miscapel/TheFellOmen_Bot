@@ -15,7 +15,7 @@ from aiogram.fsm.state import StatesGroup, State
 from aiogram.fsm.context import FSMContext
 
 BOT_TOKEN = os.getenv("BOT_TOKEN")
-STAFF_GROUP_ID = -100XXXXXXXXXX
+STAFF_GROUP_ID = -1004332150226
 
 bot = Bot(token=BOT_TOKEN, default=DefaultBotProperties(parse_mode=ParseMode.HTML))
 dp = Dispatcher(storage=MemoryStorage())
