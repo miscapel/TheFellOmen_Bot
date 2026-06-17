@@ -11,343 +11,246 @@ from aiogram.fsm.state import State, StatesGroup
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.storage.memory import MemoryStorage
 
+# --- CONFIG ---
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 STAFF_GROUP_ID = int(os.getenv("STAFF_GROUP_ID"))
 
 bot = Bot(token=BOT_TOKEN)
 dp = Dispatcher(storage=MemoryStorage())
 
+# دیتابیس موقت برای ذخیره یوزرهای تیکت
 TICKETS = {}
 
-# ---------------- KEEP ALIVE ----------------
-
+# --- KEEP ALIVE (FOR RENDER) ---
 app = Flask(__name__)
 
 @app.route('/')
 def home():
-    return "Bot is running"
+    return "TheFellOmen Bot is Online"
 
 def run_web():
     app.run(host="0.0.0.0", port=10000)
 
-# ---------------- STATES ----------------
-
-class Punishment(StatesGroup):
+# --- STATES ---
+class PunishmentFlow(StatesGroup):
     username = State()
     punish_id = State()
     reason = State()
     message = State()
 
-class Whitelist(StatesGroup):
+class WhitelistFlow(StatesGroup):
     username = State()
 
-class Support(StatesGroup):
+class SupportFlow(StatesGroup):
     message = State()
 
-class StaffReply(StatesGroup):
+class StaffReplyFlow(StatesGroup):
     message = State()
 
-# ---------------- MENU ----------------
-
-def menu():
-
+# --- KEYBOARDS ---
+def main_menu_kb():
     return InlineKeyboardMarkup(inline_keyboard=[
-
-        [InlineKeyboardButton(text="⚖️ Punishment Appeal", callback_data="punishment")],
-
-        [InlineKeyboardButton(text="✅ Whitelist Request", callback_data="whitelist")],
-
-        [InlineKeyboardButton(text="🎧 Contact Staff", callback_data="support")],
-
-        [InlineKeyboardButton(text="🛒 Shop", callback_data="shop")]
-
+        [InlineKeyboardButton(text="📜 Whitelist Request", callback_data="btn_whitelist")],
+        [InlineKeyboardButton(text="💎 Server Shop", callback_data="btn_shop")],
+        [InlineKeyboardButton(text="🆘 Support Ticket", callback_data="btn_support")],
+        [InlineKeyboardButton(text="⚖️ Punishment Appeal", callback_data="btn_punishment")]
     ])
 
-# ---------------- START ----------------
+def back_kb():
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="🔙 Back to Menu", callback_data="start_menu")]
+    ])
 
+def staff_action_kb(ticket_id):
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [
+            InlineKeyboardButton(text="✅ Accept", callback_data=f"staff_accept_{ticket_id}"),
+            InlineKeyboardButton(text="❌ Deny", callback_data=f"staff_deny_{ticket_id}")
+        ],
+        [InlineKeyboardButton(text="💬 Reply to User", callback_data=f"staff_reply_{ticket_id}")]
+    ])
+
+# --- BASIC HANDLERS ---
 @dp.message(Command("start"))
-async def start(message: types.Message):
-
+async def start_cmd(message: types.Message):
     await message.answer(
-
-        "🌙 Welcome to TheFellOmen server bot\n\n"
-        "Select one option below.",
-
-        reply_markup=menu()
-
+        "Welcome to TheFellOmen Official Bot\n\n"
+        "Please select an option from the menu below to continue.",
+        reply_markup=main_menu_kb()
     )
 
-# ---------------- PUNISHMENT ----------------
-
-@dp.callback_query(F.data == "punishment")
-async def punishment(call: types.CallbackQuery, state: FSMContext):
-
+@dp.callback_query(F.data == "start_menu")
+async def back_to_menu(call: types.CallbackQuery, state: FSMContext):
+    await state.clear()
     await call.message.edit_text(
-
-        "Punishment Appeal\n\n"
-        "Send information like this:\n\n"
-        "Username\n"
-        "Punishment ID\n"
-        "Reason\n"
-        "Message\n\n"
-        "First send your Minecraft username."
-
+        "Main Menu\n\n"
+        "Please select an option from the menu below.",
+        reply_markup=main_menu_kb()
     )
 
-    await state.set_state(Punishment.username)
-    await call.answer()
+# --- WHITELIST SECTION ---
+@dp.callback_query(F.data == "btn_whitelist")
+async def start_whitelist(call: types.CallbackQuery, state: FSMContext):
+    await call.message.edit_text(
+        "Whitelist Request\n\n"
+        "Please enter your Minecraft Username exactly as it appears in-game.",
+        reply_markup=back_kb()
+    )
+    await state.set_state(WhitelistFlow.username)
 
-@dp.message(Punishment.username)
-async def p_user(message: types.Message, state: FSMContext):
-
-    await state.update_data(username=message.text)
-
-    await message.answer("Now send Punishment ID")
-
-    await state.set_state(Punishment.punish_id)
-
-@dp.message(Punishment.punish_id)
-async def p_id(message: types.Message, state: FSMContext):
-
-    await state.update_data(punish_id=message.text)
-
-    await message.answer("Send reason of punishment")
-
-    await state.set_state(Punishment.reason)
-
-@dp.message(Punishment.reason)
-async def p_reason(message: types.Message, state: FSMContext):
-
-    await state.update_data(reason=message.text)
-
-    await message.answer("Send your appeal message")
-
-    await state.set_state(Punishment.message)
-
-@dp.message(Punishment.message)
-async def p_finish(message: types.Message, state: FSMContext):
-
-    data = await state.get_data()
-
+@dp.message(WhitelistFlow.username)
+async def process_whitelist(message: types.Message, state: FSMContext):
     ticket_id = str(uuid.uuid4())[:8]
-
     TICKETS[ticket_id] = message.from_user.id
-
-    text = (
-
-        "New Punishment Appeal\n\n"
-
+    
+    # Notify Staff
+    staff_msg = (
+        "New Whitelist Request\n\n"
         f"User: {message.from_user.full_name}\n"
-        f"UserID: {message.from_user.id}\n\n"
-
-        f"Username: {data['username']}\n"
-        f"PunishID: {data['punish_id']}\n"
-        f"Reason: {data['reason']}\n\n"
-
-        f"Message:\n{message.text}"
-
+        f"ID: {message.from_user.id}\n"
+        f"Minecraft Username: {message.text}"
     )
-
-    keyboard = InlineKeyboardMarkup(inline_keyboard=[
-
-        [
-            InlineKeyboardButton(text="✅ Accept", callback_data=f"accept_{ticket_id}"),
-            InlineKeyboardButton(text="❌ Deny", callback_data=f"deny_{ticket_id}")
-        ],
-
-        [
-            InlineKeyboardButton(text="💬 Reply", callback_data=f"reply_{ticket_id}")
-        ]
-
-    ])
-
-    await bot.send_message(STAFF_GROUP_ID, text, reply_markup=keyboard)
-
-    await message.answer("Your request was sent to staff.")
-
+    await bot.send_message(STAFF_GROUP_ID, staff_msg, reply_markup=staff_action_kb(ticket_id))
+    
+    await message.answer("Your request has been submitted to staff for review.", reply_markup=back_kb())
     await state.clear()
 
-# ---------------- WHITELIST ----------------
-
-@dp.callback_query(F.data == "whitelist")
-async def whitelist(call: types.CallbackQuery, state: FSMContext):
-
+# --- SUPPORT SECTION ---
+@dp.callback_query(F.data == "btn_support")
+async def start_support(call: types.CallbackQuery, state: FSMContext):
     await call.message.edit_text(
-
-        "Whitelist Request\n\n"
-        "Send your Minecraft username."
-
-    )
-
-    await state.set_state(Whitelist.username)
-
-@dp.message(Whitelist.username)
-async def whitelist_finish(message: types.Message, state: FSMContext):
-
-    ticket_id = str(uuid.uuid4())[:8]
-
-    TICKETS[ticket_id] = message.from_user.id
-
-    text = (
-
-        "Whitelist Request\n\n"
-
-        f"User: {message.from_user.full_name}\n"
-        f"UserID: {message.from_user.id}\n"
-        f"Username: {message.text}"
-
-    )
-
-    keyboard = InlineKeyboardMarkup(inline_keyboard=[
-
-        [
-            InlineKeyboardButton(text="✅ Accept", callback_data=f"accept_{ticket_id}"),
-            InlineKeyboardButton(text="❌ Deny", callback_data=f"deny_{ticket_id}")
-        ],
-
-        [
-            InlineKeyboardButton(text="💬 Reply", callback_data=f"reply_{ticket_id}")
-        ]
-
-    ])
-
-    await bot.send_message(STAFF_GROUP_ID, text, reply_markup=keyboard)
-
-    await message.answer("Whitelist request sent.")
-
-    await state.clear()
-
-# ---------------- SUPPORT ----------------
-
-@dp.callback_query(F.data == "support")
-async def support(call: types.CallbackQuery, state: FSMContext):
-
-    await call.message.edit_text(
-
-        "Support\n\n"
-        "Send your problem or question."
-
-    )
-
-    await state.set_state(Support.message)
-
-@dp.message(Support.message)
-async def support_finish(message: types.Message, state: FSMContext):
-
-    ticket_id = str(uuid.uuid4())[:8]
-
-    TICKETS[ticket_id] = message.from_user.id
-
-    text = (
-
         "Support Ticket\n\n"
+        "Please describe your issue or question in detail.",
+        reply_markup=back_kb()
+    )
+    await state.set_state(SupportFlow.message)
 
+@dp.message(SupportFlow.message)
+async def process_support(message: types.Message, state: FSMContext):
+    ticket_id = str(uuid.uuid4())[:8]
+    TICKETS[ticket_id] = message.from_user.id
+    
+    staff_msg = (
+        "New Support Ticket\n\n"
         f"User: {message.from_user.full_name}\n"
-        f"UserID: {message.from_user.id}\n\n"
-
+        f"ID: {message.from_user.id}\n\n"
         f"Message:\n{message.text}"
-
     )
-
-    keyboard = InlineKeyboardMarkup(inline_keyboard=[
-
-        [
-            InlineKeyboardButton(text="✅ Accept", callback_data=f"accept_{ticket_id}"),
-            InlineKeyboardButton(text="❌ Deny", callback_data=f"deny_{ticket_id}")
-        ],
-
-        [
-            InlineKeyboardButton(text="💬 Reply", callback_data=f"reply_{ticket_id}")
-        ]
-
-    ])
-
-    await bot.send_message(STAFF_GROUP_ID, text, reply_markup=keyboard)
-
-    await message.answer("Support ticket sent.")
-
+    await bot.send_message(STAFF_GROUP_ID, staff_msg, reply_markup=staff_action_kb(ticket_id))
+    
+    await message.answer("Your ticket has been sent. Staff will reply shortly.", reply_markup=back_kb())
     await state.clear()
 
-# ---------------- SHOP ----------------
-
-@dp.callback_query(F.data == "shop")
-async def shop(call: types.CallbackQuery):
-
+# --- PUNISHMENT SECTION ---
+@dp.callback_query(F.data == "btn_punishment")
+async def start_punishment(call: types.CallbackQuery, state: FSMContext):
     await call.message.edit_text(
-
-        "Server Shop\n\n"
-        "Visit our store:\n"
-        "your-store-link"
-
+        "Punishment Appeal\n\n"
+        "Step 1: Enter your Minecraft Username.",
+        reply_markup=back_kb()
     )
+    await state.set_state(PunishmentFlow.username)
 
-# ---------------- STAFF ACTIONS ----------------
+@dp.message(PunishmentFlow.username)
+async def pun_step1(message: types.Message, state: FSMContext):
+    await state.update_data(username=message.text)
+    await message.answer("Step 2: Enter your Punishment ID.")
+    await state.set_state(PunishmentFlow.punish_id)
 
-@dp.callback_query(F.data.startswith("accept_"))
-async def accept(call: types.CallbackQuery):
+@dp.message(PunishmentFlow.punish_id)
+async def pun_step2(message: types.Message, state: FSMContext):
+    await state.update_data(punish_id=message.text)
+    await message.answer("Step 3: Enter the Reason for punishment.")
+    await state.set_state(PunishmentFlow.reason)
 
-    ticket_id = call.data.split("_")[1]
+@dp.message(PunishmentFlow.reason)
+async def pun_step3(message: types.Message, state: FSMContext):
+    await state.update_data(reason=message.text)
+    await message.answer("Step 4: Enter your Appeal Message (Explain why we should unban you).")
+    await state.set_state(PunishmentFlow.message)
 
-    user_id = TICKETS.get(ticket_id)
-
-    if user_id:
-        await bot.send_message(user_id, "✅ Your request was accepted.")
-
-    await call.answer("Accepted")
-
-@dp.callback_query(F.data.startswith("deny_"))
-async def deny(call: types.CallbackQuery):
-
-    ticket_id = call.data.split("_")[1]
-
-    user_id = TICKETS.get(ticket_id)
-
-    if user_id:
-        await bot.send_message(user_id, "❌ Your request was denied.")
-
-    await call.answer("Denied")
-
-@dp.callback_query(F.data.startswith("reply_"))
-async def reply(call: types.CallbackQuery, state: FSMContext):
-
-    ticket_id = call.data.split("_")[1]
-
-    await state.update_data(ticket=ticket_id)
-
-    await state.set_state(StaffReply.message)
-
-    await call.message.reply("Send your reply")
-
-@dp.message(StaffReply.message)
-async def reply_send(message: types.Message, state: FSMContext):
-
+@dp.message(PunishmentFlow.message)
+async def pun_final(message: types.Message, state: FSMContext):
     data = await state.get_data()
-
-    ticket_id = data["ticket"]
-
-    user_id = TICKETS.get(ticket_id)
-
-    if user_id:
-        await bot.send_message(user_id, f"Staff reply:\n\n{message.text}")
-
-    await message.answer("Reply sent.")
-
+    ticket_id = str(uuid.uuid4())[:8]
+    TICKETS[ticket_id] = message.from_user.id
+    
+    staff_msg = (
+        "New Punishment Appeal\n\n"
+        f"User: {message.from_user.full_name}\n"
+        f"MC Username: {data['username']}\n"
+        f"Punishment ID: {data['punish_id']}\n"
+        f"Reason: {data['reason']}\n\n"
+        f"Appeal:\n{message.text}"
+    )
+    await bot.send_message(STAFF_GROUP_ID, staff_msg, reply_markup=staff_action_kb(ticket_id))
+    
+    await message.answer("Your appeal has been sent. You will be notified of the result.", reply_markup=back_kb())
     await state.clear()
 
-# ---------------- MAIN ----------------
+# --- SHOP SECTION ---
+@dp.callback_query(F.data == "btn_shop")
+async def show_shop(call: types.CallbackQuery):
+    await call.message.edit_text(
+        "Server Shop\n\n"
+        "Support the server and get cool ranks/items here:\n"
+        "https://store.thefellomen.com",
+        reply_markup=back_kb()
+    )
 
+# --- STAFF ACTIONS (INTERACTIVE) ---
+@dp.callback_query(F.data.startswith("staff_accept_"))
+async def staff_accept(call: types.CallbackQuery):
+    ticket_id = call.data.split("_")[2]
+    user_id = TICKETS.get(ticket_id)
+    if user_id:
+        await bot.send_message(user_id, "Notification: Your request has been accepted by the staff.")
+        await call.answer("Accepted and user notified.")
+    else:
+        await call.answer("Error: Ticket session expired.")
+
+@dp.callback_query(F.data.startswith("staff_deny_"))
+async def staff_deny(call: types.CallbackQuery):
+    ticket_id = call.data.split("_")[2]
+    user_id = TICKETS.get(ticket_id)
+    if user_id:
+        await bot.send_message(user_id, "Notification: Your request has been denied.")
+        await call.answer("Denied and user notified.")
+    else:
+        await call.answer("Error: Ticket session expired.")
+
+@dp.callback_query(F.data.startswith("staff_reply_"))
+async def staff_reply_init(call: types.CallbackQuery, state: FSMContext):
+    ticket_id = call.data.split("_")[2]
+    await state.update_data(current_ticket=ticket_id)
+    await state.set_state(StaffReplyFlow.message)
+    await call.message.reply("Type your reply message for the user:")
+
+@dp.message(StaffReplyFlow.message)
+async def staff_reply_send(message: types.Message, state: FSMContext):
+    data = await state.get_data()
+    ticket_id = data.get("current_ticket")
+    user_id = TICKETS.get(ticket_id)
+    
+    if user_id:
+        reply_text = f"Staff Response:\n\n{message.text}"
+        await bot.send_message(user_id, reply_text)
+        await message.answer("Reply sent to user.")
+    else:
+        await message.answer("Error: Could not find user for this ticket.")
+    
+    await state.clear()
+
+# --- MAIN ---
 async def main():
-
+    # Set bot commands menu in Telegram
     await bot.set_my_commands([
-
-        BotCommand(command="start", description="Start bot")
-
+        BotCommand(command="start", description="Restart the bot")
     ])
-
     await dp.start_polling(bot)
 
 if __name__ == "__main__":
-
+    # Start Web Thread
     threading.Thread(target=run_web).start()
-
+    # Start Bot
     asyncio.run(main())
