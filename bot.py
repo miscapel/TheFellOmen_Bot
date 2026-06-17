@@ -456,11 +456,11 @@ async def rank(callback: types.CallbackQuery, state: FSMContext):
     text = """
 👑 Rank Shop
 
-Vip » 49k
-Elite » 100k
-TheFellOmen » 190k
-Sponsor » 250k
-Lover » 400k
+Vip » 49,000 Toman
+Elite » 100,000 Toman
+TheFellOmen » 190,000 Toman
+Sponsor » 250,000 Toman
+Lover » 400,000 Toman
 
 درخواست خرید خود را بنویسید.
 """
@@ -478,11 +478,11 @@ async def coin(callback: types.CallbackQuery, state: FSMContext):
     text = """
 🪙 Coin Shop
 
-50 » 15k
-100 » 30k
-150 » 55k
-200 » 80k
-250 » 150k
+50 » 15,000
+100 » 30,000
+150 » 55,000
+200 » 80,000
+250 » 150,000
 
 درخواست خرید خود را بنویسید.
 """
