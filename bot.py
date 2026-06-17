@@ -22,11 +22,8 @@ BOT_TOKEN = os.getenv("BOT_TOKEN")
 
 STAFF_GROUP_ID = -1004332150226
 
-# استیکرها (لطفاً این ID ها را با استیکرهای دلخواه خودتان جایگزین کنید)
-WELCOME_STICKER = "CAACAgQAAxkBAAEBExampleStickerID1" # استیکر خوش آمدگویی
-SUCCESS_STICKER = "CAACAgQAAxkBAAEBExampleStickerID2" # استیکر موفقیت آمیز
-SHOP_STICKER = "CAACAgQAAxkBAAEBExampleStickerID3"    # استیکر فروشگاه
-TICKET_STICKER = "CAACAgQAAxkBAAEBExampleStickerID4"  # استیکر تیکت
+# استیکر خوش آمدگویی
+WELCOME_STICKER = "CAACAgQAAxkBAAEBExampleStickerID"
 
 logging.basicConfig(level=logging.INFO)
 
@@ -156,22 +153,15 @@ class Shop(StatesGroup):
 @dp.message(Command("start"))
 async def start(message: types.Message):
 
-    await message.answer_sticker(WELCOME_STICKER)
-
     text = """
-🔥 <b>Welcome to TheFellOmen Network</b>
+🔥 <b>TheFellOmen Support Center</b>
 
 به سیستم رسمی پشتیبانی سرور خوش آمدید.
 
-در اینجا می‌توانید:
-
-⚖️ درخواست Unban بدهید  
-📜 درخواست Whitelist ثبت کنید  
-🆘 با Staff ارتباط بگیرید  
-💎 از Shop خرید کنید  
-
-یکی از گزینه‌های زیر را انتخاب کنید 👇
+از دکمه‌های زیر استفاده کنید.
 """
+
+    await message.answer_sticker(WELCOME_STICKER)
 
     await message.answer(
         text,
@@ -179,7 +169,7 @@ async def start(message: types.Message):
     )
 
     await message.answer(
-        "🎮 Menu",
+        "👇",
         reply_markup=main_menu()
     )
 
@@ -280,10 +270,8 @@ Ticket: {ticket}
         reply_markup=staff_buttons(ticket)
     )
 
-    await message.answer_sticker(SUCCESS_STICKER)
-
     await message.answer(
-        "✅ درخواست شما برای استاف ارسال شد.",
+        "✅ درخواست شما ارسال شد.",
         reply_markup=main_menu()
     )
 
@@ -361,10 +349,8 @@ Ticket: {ticket}
         reply_markup=staff_buttons(ticket)
     )
 
-    await message.answer_sticker(TICKET_STICKER)
-
     await message.answer(
-        "✅ درخواست شما ارسال شد.",
+        "✅ درخواست ارسال شد.",
         reply_markup=main_menu()
     )
 
@@ -432,10 +418,8 @@ Ticket: {ticket}
         reply_markup=staff_buttons(ticket)
     )
 
-    await message.answer_sticker(TICKET_STICKER)
-
     await message.answer(
-        "✅ تیکت شما ارسال شد.",
+        "✅ تیکت ارسال شد.",
         reply_markup=main_menu()
     )
 
@@ -447,10 +431,8 @@ Ticket: {ticket}
 @dp.message(F.text == "💎 Shop")
 async def shop(message: types.Message):
 
-    await message.answer_sticker(SHOP_STICKER)
-
     await message.answer(
-        "💎 <b>TheFellOmen Store</b>",
+        "💎 Server Shop",
         reply_markup=shop_menu()
     )
 
@@ -459,7 +441,7 @@ async def shop(message: types.Message):
 async def shop_inline(callback: types.CallbackQuery):
 
     await callback.message.edit_text(
-        "💎 <b>TheFellOmen Store</b>",
+        "💎 Server Shop",
         reply_markup=shop_menu()
     )
 
@@ -474,11 +456,11 @@ async def rank(callback: types.CallbackQuery, state: FSMContext):
     text = """
 👑 Rank Shop
 
-Vip » 49,000 Toman
-Elite » 100,000 Toman
-TheFellOmen » 190,000 Toman
-Sponsor » 250,000 Toman
-Lover » 400,000 Toman
+Vip » 49k
+Elite » 100k
+TheFellOmen » 190k
+Sponsor » 250k
+Lover » 400k
 
 درخواست خرید خود را بنویسید.
 """
@@ -496,11 +478,11 @@ async def coin(callback: types.CallbackQuery, state: FSMContext):
     text = """
 🪙 Coin Shop
 
-50 » 15,000
-100 » 30,000
-150 » 55,000
-200 » 80,000
-250 » 150,000
+50 » 15k
+100 » 30k
+150 » 55k
+200 » 80k
+250 » 150k
 
 درخواست خرید خود را بنویسید.
 """
@@ -541,10 +523,8 @@ Ticket: {ticket}
         reply_markup=staff_buttons(ticket)
     )
 
-    await message.answer_sticker(SUCCESS_STICKER)
-
     await message.answer(
-        "✅ درخواست خرید شما ارسال شد.",
+        "✅ درخواست خرید ارسال شد.",
         reply_markup=main_menu()
     )
 
@@ -553,7 +533,41 @@ Ticket: {ticket}
 
 # ================= STAFF =================
 
-@dp.message(F.chat.id == STAFF_GROUP_ID)
+@dp.callback_query(F.data.startswith("accept"))
+async def accept(callback: types.CallbackQuery):
+
+    ticket = callback.data.split(":")[1]
+
+    user = TICKETS[ticket]["user"]
+
+    await bot.send_message(user, "✅ درخواست شما تایید شد.")
+
+    await callback.answer("Accepted")
+
+
+@dp.callback_query(F.data.startswith("deny"))
+async def deny(callback: types.CallbackQuery):
+
+    ticket = callback.data.split(":")[1]
+
+    user = TICKETS[ticket]["user"]
+
+    await bot.send_message(user, "❌ درخواست شما رد شد.")
+
+    await callback.answer("Denied")
+
+
+@dp.callback_query(F.data.startswith("reply"))
+async def reply(callback: types.CallbackQuery):
+
+    ticket = callback.data.split(":")[1]
+
+    REPLY_MODE[callback.from_user.id] = ticket
+
+    await callback.message.reply("پیام خود را ارسال کنید.")
+
+
+@dp.message()
 async def staff_reply(message: types.Message):
 
     if message.from_user.id not in REPLY_MODE:
