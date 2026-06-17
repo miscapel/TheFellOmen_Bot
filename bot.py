@@ -1,15 +1,17 @@
 import asyncio
 import os
-import json
 import random
 import string
 import threading
+
 from flask import Flask
 from aiogram import Bot, Dispatcher, types, F
-from aiogram.filters import Command
 from aiogram.enums import ParseMode
+from aiogram.filters import Command
 from aiogram.client.default import DefaultBotProperties
 from aiogram.fsm.storage.memory import MemoryStorage
+from aiogram.fsm.state import StatesGroup, State
+from aiogram.fsm.context import FSMContext
 
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 
@@ -23,6 +25,7 @@ bot = Bot(
 dp = Dispatcher(storage=MemoryStorage())
 
 TICKETS = {}
+REPLY_MODE = {}
 
 # ---------------- KEEP ALIVE ----------------
 
@@ -68,6 +71,11 @@ def staff_buttons(ticket):
         ]
     )
 
+# ---------------- STATES ----------------
+
+class TicketState(StatesGroup):
+    waiting_message = State()
+
 # ---------------- START ----------------
 
 @dp.message(Command("start"))
@@ -76,17 +84,90 @@ async def start(message:types.Message):
     text = """
 👋 به مرکز پشتیبانی TheFellOmen خوش آمدید
 
-اگر به کمک نیاز دارید، می‌خواهید اعتراض ثبت کنید،
-درخواست وایت لیست بدهید یا با استاف صحبت کنید،
-از گزینه‌های زیر استفاده کنید.
+برای ارسال تیکت یکی از گزینه‌های زیر را انتخاب کنید.
 """
 
     await message.answer(text,reply_markup=main_menu())
 
+# ---------------- MENU ----------------
+
+@dp.message(F.text == "🚫 اعتراض به مجازات")
+async def punish(message:types.Message,state:FSMContext):
+
+    await state.update_data(type="Punishment Appeal")
+    await state.set_state(TicketState.waiting_message)
+
+    await message.answer("لطفاً توضیحات اعتراض خود را ارسال کنید.")
+
+@dp.message(F.text == "✅ درخواست وایت لیست")
+async def whitelist(message:types.Message,state:FSMContext):
+
+    await state.update_data(type="Whitelist Request")
+    await state.set_state(TicketState.waiting_message)
+
+    await message.answer("نام کاربری ماینکرفت و توضیحات خود را ارسال کنید.")
+
+@dp.message(F.text == "👨‍💻 ارتباط با استاف")
+async def contact(message:types.Message,state:FSMContext):
+
+    await state.update_data(type="Contact Staff")
+    await state.set_state(TicketState.waiting_message)
+
+    await message.answer("پیام خود را برای تیم استاف ارسال کنید.")
+
+@dp.message(F.text == "🛒 فروشگاه سرور")
+async def shop(message:types.Message,state:FSMContext):
+
+    await state.update_data(type="Shop Order")
+    await state.set_state(TicketState.waiting_message)
+
+    await message.answer("سفارش خود را بنویسید.")
+
+# ---------------- TEXT TICKET ----------------
+
+@dp.message(TicketState.waiting_message, F.text)
+async def ticket_text(message:types.Message,state:FSMContext):
+
+    data = await state.get_data()
+
+    ticket = ticket_id()
+
+    TICKETS[ticket] = {
+        "user": message.from_user.id,
+        "status": "open"
+    }
+
+    text = f"""
+📨 تیکت جدید
+
+🎫 Ticket ID: {ticket}
+
+📌 نوع تیکت:
+{data['type']}
+
+👤 کاربر:
+@{message.from_user.username}
+
+💬 پیام:
+{message.text}
+"""
+
+    await bot.send_message(
+        STAFF_GROUP_ID,
+        text,
+        reply_markup=staff_buttons(ticket)
+    )
+
+    await message.answer("✅ تیکت شما برای استاف ارسال شد.")
+
+    await state.clear()
+
 # ---------------- MEDIA TICKET ----------------
 
-@dp.message(F.photo | F.video | F.document)
-async def media_ticket(message: types.Message):
+@dp.message(TicketState.waiting_message, F.photo | F.video | F.document)
+async def ticket_media(message:types.Message,state:FSMContext):
+
+    data = await state.get_data()
 
     ticket = ticket_id()
 
@@ -99,6 +180,9 @@ async def media_ticket(message: types.Message):
 📨 تیکت جدید
 
 🎫 Ticket ID: {ticket}
+
+📌 نوع تیکت:
+{data['type']}
 
 👤 کاربر:
 @{message.from_user.username}
@@ -128,42 +212,9 @@ async def media_ticket(message: types.Message):
             reply_markup=staff_buttons(ticket)
         )
 
-    await message.answer("✅ فایل شما برای تیم استاف ارسال شد.")
+    await message.answer("✅ فایل شما برای استاف ارسال شد.")
 
-# ---------------- TEXT MESSAGE TICKET ----------------
-
-@dp.message(F.text)
-async def text_ticket(message:types.Message):
-
-    if message.text.startswith("/"):
-        return
-
-    ticket = ticket_id()
-
-    TICKETS[ticket] = {
-        "user": message.from_user.id,
-        "status": "open"
-    }
-
-    text = f"""
-📨 تیکت جدید
-
-🎫 Ticket ID: {ticket}
-
-👤 کاربر:
-@{message.from_user.username}
-
-💬 پیام:
-{message.text}
-"""
-
-    await bot.send_message(
-        STAFF_GROUP_ID,
-        text,
-        reply_markup=staff_buttons(ticket)
-    )
-
-    await message.answer("✅ پیام شما برای تیم استاف ارسال شد.")
+    await state.clear()
 
 # ---------------- ACCEPT ----------------
 
@@ -172,16 +223,12 @@ async def accept_ticket(callback:types.CallbackQuery):
 
     ticket = callback.data.split(":")[1]
 
-    if ticket not in TICKETS:
-        await callback.answer("تیکت پیدا نشد",show_alert=True)
-        return
-
     if TICKETS[ticket]["status"] == "accepted":
-        await callback.answer("✅ این تیکت قبلاً Accept شده است",show_alert=True)
+        await callback.answer("قبلاً Accept شده",show_alert=True)
         return
 
     if TICKETS[ticket]["status"] == "denied":
-        await callback.answer("❌ این تیکت قبلاً Deny شده است",show_alert=True)
+        await callback.answer("قبلاً Deny شده",show_alert=True)
         return
 
     TICKETS[ticket]["status"] = "accepted"
@@ -190,10 +237,10 @@ async def accept_ticket(callback:types.CallbackQuery):
 
     await bot.send_message(
         user,
-        f"✅ تیکت شما با شناسه {ticket} توسط استاف پذیرفته شد."
+        f"✅ تیکت {ticket} توسط استاف پذیرفته شد."
     )
 
-    await callback.answer("تیکت Accept شد")
+    await callback.answer("Accept شد")
 
 # ---------------- DENY ----------------
 
@@ -202,16 +249,12 @@ async def deny_ticket(callback:types.CallbackQuery):
 
     ticket = callback.data.split(":")[1]
 
-    if ticket not in TICKETS:
-        await callback.answer("تیکت پیدا نشد",show_alert=True)
-        return
-
     if TICKETS[ticket]["status"] == "denied":
-        await callback.answer("❌ این تیکت قبلاً Deny شده است",show_alert=True)
+        await callback.answer("قبلاً Deny شده",show_alert=True)
         return
 
     if TICKETS[ticket]["status"] == "accepted":
-        await callback.answer("✅ این تیکت قبلاً Accept شده است",show_alert=True)
+        await callback.answer("قبلاً Accept شده",show_alert=True)
         return
 
     TICKETS[ticket]["status"] = "denied"
@@ -220,30 +263,23 @@ async def deny_ticket(callback:types.CallbackQuery):
 
     await bot.send_message(
         user,
-        f"❌ تیکت شما با شناسه {ticket} توسط استاف رد شد."
+        f"❌ تیکت {ticket} رد شد."
     )
 
-    await callback.answer("تیکت Deny شد")
+    await callback.answer("Deny شد")
 
 # ---------------- REPLY ----------------
-
-REPLY_MODE = {}
 
 @dp.callback_query(F.data.startswith("reply:"))
 async def reply_ticket(callback:types.CallbackQuery):
 
     ticket = callback.data.split(":")[1]
 
-    if ticket not in TICKETS:
-        return
-
     user = TICKETS[ticket]["user"]
 
-    REPLY_MODE[callback.from_user.id] = {
-        "user": user
-    }
+    REPLY_MODE[callback.from_user.id] = user
 
-    await callback.message.reply("💬 پیام خود را برای بازیکن ارسال کنید.")
+    await callback.message.reply("پیام خود را برای بازیکن ارسال کنید.")
 
 @dp.message(F.chat.id == STAFF_GROUP_ID)
 async def staff_reply(message:types.Message):
@@ -251,14 +287,14 @@ async def staff_reply(message:types.Message):
     if message.from_user.id not in REPLY_MODE:
         return
 
-    user = REPLY_MODE[message.from_user.id]["user"]
+    user = REPLY_MODE[message.from_user.id]
 
     await bot.send_message(
         user,
         f"💬 پیام از طرف استاف:\n\n{message.text}"
     )
 
-    await message.reply("✅ پیام ارسال شد")
+    await message.reply("✅ ارسال شد")
 
     del REPLY_MODE[message.from_user.id]
 
