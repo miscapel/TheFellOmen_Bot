@@ -1,17 +1,30 @@
 import asyncio
 import os
-from datetime import datetime
+import logging
+import random
+import string
+from datetime import datetime, timedelta
 
 from aiogram import Bot, Dispatcher, F, types
-from aiogram.filters import Command
 from aiogram.enums import ParseMode
+from aiogram.filters import Command
+from aiogram.client.default import DefaultBotProperties
 from aiogram.fsm.state import State, StatesGroup
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.storage.memory import MemoryStorage
-from aiogram.client.default import DefaultBotProperties
+
+# ================= CONFIG =================
 
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 STAFF_GROUP_ID = -1004332150226
+
+COOLDOWN_SECONDS = 30
+
+# ================= LOGGING =================
+
+logging.basicConfig(level=logging.INFO)
+
+# ================= BOT INIT =================
 
 bot = Bot(
     token=BOT_TOKEN,
@@ -20,7 +33,57 @@ bot = Bot(
 
 dp = Dispatcher(storage=MemoryStorage())
 
-# ---------------- STATES ----------------
+# ================= DATABASE (Memory) =================
+
+active_tickets = {}
+cooldowns = {}
+
+# ================= UTILITIES =================
+
+def generate_ticket_id(prefix="T"):
+    return prefix + ''.join(random.choices(string.digits, k=5))
+
+def now():
+    return datetime.now().strftime("%Y-%m-%d %H:%M")
+
+def is_on_cooldown(user_id):
+    if user_id not in cooldowns:
+        return False
+    return datetime.now() < cooldowns[user_id]
+
+def set_cooldown(user_id):
+    cooldowns[user_id] = datetime.now() + timedelta(seconds=COOLDOWN_SECONDS)
+
+async def is_staff(user_id):
+    member = await bot.get_chat_member(STAFF_GROUP_ID, user_id)
+    return member.status in ["administrator", "creator"]
+
+def main_menu():
+    return types.ReplyKeyboardMarkup(
+        keyboard=[
+            [types.KeyboardButton(text="⚖️ Punishment Appeal")],
+            [types.KeyboardButton(text="📜 Whitelist")],
+            [types.KeyboardButton(text="🆘 Contact Staff")],
+            [types.KeyboardButton(text="💎 Shop")]
+        ],
+        resize_keyboard=True
+    )
+
+def staff_buttons(ticket_id, user_id):
+    return types.InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                types.InlineKeyboardButton(text="✅ Accept", callback_data=f"accept|{ticket_id}|{user_id}"),
+                types.InlineKeyboardButton(text="❌ Deny", callback_data=f"deny|{ticket_id}|{user_id}")
+            ],
+            [
+                types.InlineKeyboardButton(text="💬 Reply", callback_data=f"reply|{ticket_id}|{user_id}"),
+                types.InlineKeyboardButton(text="🔒 Close", callback_data=f"close|{ticket_id}|{user_id}")
+            ]
+        ]
+    )
+
+# ================= STATES =================
 
 class Appeal(StatesGroup):
     username = State()
@@ -36,308 +99,125 @@ class Contact(StatesGroup):
     reason = State()
     message = State()
 
-# ---------------- KEYBOARDS ----------------
-
-def main_menu():
-    return types.ReplyKeyboardMarkup(
-        keyboard=[
-            [types.KeyboardButton(text="⚖️ Punishment Appeal")],
-            [types.KeyboardButton(text="📜 Whitelist")],
-            [types.KeyboardButton(text="🆘 Contact Staff")],
-            [types.KeyboardButton(text="💎 Shop")]
-        ],
-        resize_keyboard=True
-    )
-
-def shop_menu():
-    return types.InlineKeyboardMarkup(
-        inline_keyboard=[
-            [types.InlineKeyboardButton(text="🏆 Rank Shop", callback_data="rank")],
-            [types.InlineKeyboardButton(text="🪙 Coin Shop", callback_data="coin")]
-        ]
-    )
-
-# ---------------- START ----------------
+# ================= START =================
 
 @dp.message(Command("start"))
 async def start(message: types.Message):
     await message.answer(
-        "👋 خوش آمدید به ربات رسمی سرور\n\n"
-        "از منوی زیر بخش مورد نظر خود را انتخاب کنید.",
+        "🔥 Welcome to TheFellOmen Ultimate Staff Bot\n\n"
+        "از منوی زیر انتخاب کنید.",
         reply_markup=main_menu()
     )
 
-# ---------------- PUNISHMENT APPEAL ----------------
+# ================= ANTI MULTI TICKET =================
+
+def has_active_ticket(user_id):
+    return user_id in active_tickets
+
+def create_ticket(user_id, ticket_id):
+    active_tickets[user_id] = ticket_id
+
+def close_ticket(user_id):
+    if user_id in active_tickets:
+        del active_tickets[user_id]
+
+# ================= PUNISHMENT APPEAL =================
 
 @dp.message(F.text == "⚖️ Punishment Appeal")
 async def appeal_start(message: types.Message, state: FSMContext):
 
-    await state.set_state(Appeal.username)
+    if has_active_ticket(message.from_user.id):
+        await message.answer("❌ شما یک تیکت باز دارید.")
+        return
 
-    await message.answer(
-        "🎮 لطفا یوزرنیم ماینکرفت خود را ارسال کنید."
-    )
+    await state.set_state(Appeal.username)
+    await message.answer("🎮 یوزرنیم ماینکرفت خود را وارد کنید.")
 
 @dp.message(Appeal.username)
 async def appeal_username(message: types.Message, state: FSMContext):
-
     await state.update_data(username=message.text)
     await state.set_state(Appeal.pid)
-
-    await message.answer(
-        "🆔 لطفا Punishment ID خود را ارسال کنید."
-    )
+    await message.answer("🆔 Punishment ID را وارد کنید.")
 
 @dp.message(Appeal.pid)
 async def appeal_pid(message: types.Message, state: FSMContext):
-
     await state.update_data(pid=message.text)
     await state.set_state(Appeal.reason)
-
-    await message.answer(
-        "📄 دلیل درخواست رفع مجازات را بنویسید."
-    )
+    await message.answer("📄 دلیل درخواست را بنویسید.")
 
 @dp.message(Appeal.reason)
 async def appeal_reason(message: types.Message, state: FSMContext):
-
     await state.update_data(reason=message.text)
     await state.set_state(Appeal.message)
-
-    await message.answer(
-        "✍️ توضیحات کامل خود را ارسال کنید.\n\n"
-        "می‌توانید متن، عکس یا ویدیو بفرستید."
-    )
+    await message.answer("✍️ توضیحات کامل را ارسال کنید (متن/عکس/ویدیو).")
 
 @dp.message(Appeal.message)
 async def appeal_finish(message: types.Message, state: FSMContext):
 
+    if is_on_cooldown(message.from_user.id):
+        await message.answer("⏳ لطفا کمی صبر کنید.")
+        return
+
     data = await state.get_data()
 
-    username = data["username"]
-    pid = data["pid"]
-    reason = data["reason"]
-
-    time = datetime.now().strftime("%Y-%m-%d %H:%M")
+    ticket_id = generate_ticket_id("A")
+    create_ticket(message.from_user.id, ticket_id)
+    set_cooldown(message.from_user.id)
 
     text = f"""
+━━━━━━━━━━━━━━━━━━
 ⚖️ <b>Punishment Appeal</b>
 
-Username: {username}
+👤 Username: {data['username']}
+🆔 User ID: {message.from_user.id}
 
-Reason: {reason}
+📌 Punishment ID: {data['pid']}
+📄 Reason: {data['reason']}
 
-Punishment ID: {pid}
-
-Time: {time}
+🕒 Time: {now()}
+🎫 Ticket: #{ticket_id}
+━━━━━━━━━━━━━━━━━━
 """
-
-    keyboard = types.InlineKeyboardMarkup(
-        inline_keyboard=[
-            [
-                types.InlineKeyboardButton(text="✅ Accept", callback_data=f"accept_{message.from_user.id}"),
-                types.InlineKeyboardButton(text="❌ Deny", callback_data=f"deny_{message.from_user.id}")
-            ],
-            [
-                types.InlineKeyboardButton(text="💬 Reply", callback_data=f"reply_{message.from_user.id}")
-            ]
-        ]
-    )
 
     if message.photo:
-        await bot.send_photo(
-            STAFF_GROUP_ID,
-            message.photo[-1].file_id,
-            caption=text + f"\n\nMessage:\n{message.caption}",
-            reply_markup=keyboard
-        )
-
+        await bot.send_photo(STAFF_GROUP_ID, message.photo[-1].file_id,
+                             caption=text + f"\n💬 Message:\n{message.caption}",
+                             reply_markup=staff_buttons(ticket_id, message.from_user.id))
     elif message.video:
-        await bot.send_video(
-            STAFF_GROUP_ID,
-            message.video.file_id,
-            caption=text + f"\n\nMessage:\n{message.caption}",
-            reply_markup=keyboard
-        )
-
+        await bot.send_video(STAFF_GROUP_ID, message.video.file_id,
+                             caption=text + f"\n💬 Message:\n{message.caption}",
+                             reply_markup=staff_buttons(ticket_id, message.from_user.id))
     else:
-        await bot.send_message(
-            STAFF_GROUP_ID,
-            text + f"\n\nMessage:\n{message.text}",
-            reply_markup=keyboard
-        )
+        await bot.send_message(STAFF_GROUP_ID,
+                               text + f"\n💬 Message:\n{message.text}",
+                               reply_markup=staff_buttons(ticket_id, message.from_user.id))
 
-    await message.answer(
-        "✅ درخواست شما با موفقیت برای استاف ارسال شد.",
-        reply_markup=main_menu()
-    )
-
+    await message.answer("✅ درخواست شما ارسال شد.", reply_markup=main_menu())
     await state.clear()
 
-# ---------------- WHITELIST ----------------
+# ================= STAFF ACTIONS =================
 
-@dp.message(F.text == "📜 Whitelist")
-async def whitelist(message: types.Message, state: FSMContext):
+@dp.callback_query(F.data.startswith(("accept","deny","close")))
+async def staff_action(callback: types.CallbackQuery):
 
-    await state.set_state(Whitelist.username)
+    action, ticket_id, user_id = callback.data.split("|")
+    user_id = int(user_id)
 
-    await message.answer(
-        "لطفا یوزری که میخواهید وایت لیست شود را بنویسید."
-    )
+    if not await is_staff(callback.from_user.id):
+        await callback.answer("⛔ شما ادمین نیستید.", show_alert=True)
+        return
 
-@dp.message(Whitelist.username)
-async def whitelist_user(message: types.Message, state: FSMContext):
+    if action == "accept":
+        await bot.send_message(user_id, f"✅ تیکت #{ticket_id} تایید شد.")
+    elif action == "deny":
+        await bot.send_message(user_id, f"❌ تیکت #{ticket_id} رد شد.")
+    elif action == "close":
+        close_ticket(user_id)
+        await bot.send_message(user_id, f"🔒 تیکت #{ticket_id} بسته شد.")
 
-    await state.update_data(username=message.text)
-    await state.set_state(Whitelist.message)
+    await callback.answer("✅ انجام شد.")
 
-    await message.answer(
-        "اگر توضیحی دارید ارسال کنید (متن / عکس / ویدیو)"
-    )
-
-@dp.message(Whitelist.message)
-async def whitelist_finish(message: types.Message, state: FSMContext):
-
-    data = await state.get_data()
-    time = datetime.now().strftime("%Y-%m-%d %H:%M")
-
-    text = f"""
-📜 <b>Whitelist</b>
-
-Username: {data["username"]}
-
-Time: {time}
-"""
-
-    keyboard = types.InlineKeyboardMarkup(
-        inline_keyboard=[
-            [
-                types.InlineKeyboardButton(text="✅ Accept", callback_data=f"accept_{message.from_user.id}"),
-                types.InlineKeyboardButton(text="❌ Deny", callback_data=f"deny_{message.from_user.id}")
-            ]
-        ]
-    )
-
-    await bot.send_message(
-        STAFF_GROUP_ID,
-        text + f"\n\nMessages:\n{message.text}",
-        reply_markup=keyboard
-    )
-
-    await message.answer("✅ درخواست وایت لیست ارسال شد.", reply_markup=main_menu())
-
-    await state.clear()
-
-# ---------------- CONTACT ----------------
-
-@dp.message(F.text == "🆘 Contact Staff")
-async def contact(message: types.Message, state: FSMContext):
-
-    await state.set_state(Contact.reason)
-
-    await message.answer(
-        "📄 دلیل تماس با استاف را بنویسید."
-    )
-
-@dp.message(Contact.reason)
-async def contact_reason(message: types.Message, state: FSMContext):
-
-    await state.update_data(reason=message.text)
-    await state.set_state(Contact.message)
-
-    await message.answer(
-        "✉️ پیام کامل خود را ارسال کنید.\n"
-        "می‌توانید عکس یا ویدیو هم بفرستید."
-    )
-
-@dp.message(Contact.message)
-async def contact_finish(message: types.Message, state: FSMContext):
-
-    data = await state.get_data()
-    time = datetime.now().strftime("%Y-%m-%d %H:%M")
-
-    text = f"""
-🆘 <b>Contact Staff</b>
-
-Username: {message.from_user.username}
-
-Reason: {data["reason"]}
-
-Time: {time}
-"""
-
-    keyboard = types.InlineKeyboardMarkup(
-        inline_keyboard=[
-            [
-                types.InlineKeyboardButton(text="✅ Accept", callback_data=f"accept_{message.from_user.id}"),
-                types.InlineKeyboardButton(text="❌ Deny", callback_data=f"deny_{message.from_user.id}")
-            ],
-            [
-                types.InlineKeyboardButton(text="💬 Reply", callback_data=f"reply_{message.from_user.id}")
-            ]
-        ]
-    )
-
-    await bot.send_message(
-        STAFF_GROUP_ID,
-        text + f"\n\nMessages:\n{message.text}",
-        reply_markup=keyboard
-    )
-
-    await message.answer("✅ پیام شما برای استاف ارسال شد.", reply_markup=main_menu())
-
-    await state.clear()
-
-# ---------------- SHOP ----------------
-
-@dp.message(F.text == "💎 Shop")
-async def shop(message: types.Message):
-
-    await message.answer(
-        "💎 فروشگاه سرور",
-        reply_markup=shop_menu()
-    )
-
-@dp.callback_query(F.data == "rank")
-async def rank(callback: types.CallbackQuery):
-
-    await callback.message.answer(
-"""
-🏆 Rank Shop
-
-Vip » 49,000 Toman
-Elite » 100,000 Toman
-TheFellOmen » 190,000 Toman
-Sponsor » 250,000 Toman
-Lover » 400,000 Toman
-
-اگر فقط کیت رنک میخواهید
-نام رنک و کیت را بنویسید
-
-مثال:
-کیت رنک الایت
-"""
-)
-
-@dp.callback_query(F.data == "coin")
-async def coin(callback: types.CallbackQuery):
-
-    await callback.message.answer(
-"""
-🪙 Coin Shop
-
-50 Coin » 15,000 Toman
-100 Coins » 30,000 Toman
-150 Coins » 55,000 Toman
-200 Coins » 80,000 Toman
-250 Coins » 150,000 Toman
-
-اگر مقدار بیشتری نیاز دارید
-عدد مورد نظر را در چت بنویسید.
-"""
-)
-
-# ---------------- RUN ----------------
+# ================= RUN =================
 
 async def main():
     await dp.start_polling(bot)
